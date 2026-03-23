@@ -1,0 +1,95 @@
+name: quran_app
+description: Quran app using hafs_smart_v8 dataset.
+publish_to: 'none'
+
+version: 2.0.0+2
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  wakelock_plus: ^1.2.8
+  google_fonts: ^6.2.1
+  shared_preferences: ^2.2.2
+  just_audio: ^0.9.42
+  just_audio_background: ^0.0.1-beta.17
+  audio_session: ^0.1.25
+  url_launcher: ^6.2.5
+  package_info_plus: ^8.0.0
+  sqflite: ^2.3.2
+  sqflite_common_ffi: ^2.3.2
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  flutter_svg: ^2.0.10+1
+  vibration: ^3.1.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/
+    - assets/audio/ayah-recitation-alnufais.json/
+    - assets/audio/ayah-recitation-abdur-rahman-as-sudais-recitation.json/
+    - assets/audio/ayah-recitation-mahmoud-khalil-al-husary-murattal-hafs-957.json/
+    - assets/audio/ayah-recitation-hani-ar-rifai-recitation-murattal-hafs-68.json/
+    - assets/audio/ayah-recitation-saud-al-shuraim-murattal-hafs-960.json/
+    - assets/audio/ayah-recitation-yasser-al-dosari-murattal-hafs-961.json/
+    - assets/audio/ayah-recitation-muhammad-siddiq-al-minshawi-murattal-hafs-959.json/
+    - assets/audio/ayah-recitation-khalifa-al-tunaiji-murattal-hafs-958.json/
+    - assets/audio/ayah-recitation-maher-al-mu-aiqly-murattal-hafs-948.json/
+    - assets/audio/ayah-recitation-abdul-basit-abdul-samad-mujawwad-hafs-949.json/
+    - assets/audio/ayah-recitation-abu-bakr-al-shatri-murattal-hafs-952.json/
+    - assets/audio/ayah-recitation-saad-al-ghamdi-murattal-hafs-954.json/
+    - assets/data/hafs_smart_v8.json
+    - assets/data/quran.json
+    - assets/tafseer/
+    - assets/azkar/
+    - assets/icon/
+    - assets/database/
+    - assets/data/database/
+    # QPCV4TajweedFont و qcf مستخدمان فقط في "المصحف النصي" — غير مفعّل في الواجهة، لذا لا نضمّنهما.
+    # - assets/fonts/qcf/
+    # - assets/fonts/QPCV4TajweedFont/    # قارئ QPC V1 / V4 / V4 أسود (من quran_test)
+    - assets/database/quran-data.sqlite
+    - assets/fonts/qcf4/
+    - assets/fonts/qcf_pages/
+
+  fonts:
+    - family: QuranUthmani
+      fonts:
+        - asset: assets/fonts/uthmanic_hafs_v20.ttf
+    - family: SurahNameV4
+      fonts:
+        - asset: assets/fonts/surah-name-v4.ttf
+    - family: KFGQPCHAFSUthmanicScript
+      fonts:
+        - asset: assets/fonts/KFGQPCHAFSUthmanicScript-Regula.ttf
+    # خط kitab (لوضع V4 أسود): أضف عند توفر الملف assets/fonts/kitab.ttf
+    # - family: kitab
+    #   fonts:
+    #     - asset: assets/fonts/kitab.ttf
+
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background_color: "#1B5E20"
+    theme_color: "#1B5E20"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+  macos:
+    generate: true
+    image_path: "assets/icon/app_icon.png"

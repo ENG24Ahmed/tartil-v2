@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- شاشة فتح التطبيق: خلفية مخضرة + أيقونة (تظهر فوراً قبل تحميل Flutter) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <color android:color="#E8F5E9"/>
+    </item>
+    <item
+        android:gravity="center"
+        android:width="140dp"
+        android:height="140dp">
+        <bitmap
+            android:src="@mipmap/ic_launcher"
+            android:gravity="center"/>
+    </item>
+</layer-list>

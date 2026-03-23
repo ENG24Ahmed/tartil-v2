@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="مصحف ترتيل — تلاوة القرآن الكريم">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="ترتيل">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>ترتيل</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!-- شاشة فتح احترافية حتى تحميل Flutter -->
+  <div id="loading" style="
+    position: fixed; inset: 0; z-index: 9999;
+    background: linear-gradient(180deg, #1B5E20 0%, #2E7D32 50%, #1B5E20 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: 'Segoe UI', Tahoma, sans-serif;">
+    <img src="icons/Icon-192.png" alt="ترتيل" style="width: 120px; height: 120px; margin-bottom: 20px; border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);">
+    <h1 style="color: #E8F5E9; font-size: 2rem; font-weight: 700; margin: 0; letter-spacing: 0.02em;">ترتيل</h1>
+    <p style="color: #C8E6C9; font-size: 0.95rem; margin-top: 8px;">مصحف القرآن الكريم</p>
+    <div style="margin-top: 32px; width: 40px; height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px; overflow: hidden;">
+      <div id="loading-bar" style="height: 100%; width: 0%; background: #E8F5E9; border-radius: 2px; animation: load 1.5s ease-in-out infinite;"></div>
+    </div>
+  </div>
+  <script>
+    window.addEventListener('load', function() {
+      var loading = document.getElementById('loading');
+      if (loading) setTimeout(function() { loading.style.opacity = '0'; loading.style.transition = 'opacity 0.3s'; setTimeout(function() { loading.style.display = 'none'; }, 300); }, 500);
+    });
+  </script>
+  <style>@keyframes load { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }</style>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
