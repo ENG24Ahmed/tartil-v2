@@ -1,16 +1,18 @@
-# quran_app
+# ترتيل (Tartil)
 
-A new Flutter project.
+ترتيل — مصحف رقمي، تفسير، وأذكار.
 
-## Getting Started
+## التشغيل
 
-This project is a starting point for a Flutter application.
+```bash
+flutter pub get
+flutter run
+```
 
-A few resources to get you started if this is your first Flutter project:
+## iOS (للمطوّر)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+```bash
+cd ios && pod install && cd ..
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+ثم افتح `ios/Runner.xcworkspace` في Xcode.
