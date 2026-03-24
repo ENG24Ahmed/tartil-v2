@@ -30,6 +30,9 @@ import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
 
 enum QpcMushafMode { qpc1, qpc4, qpc4Black }
 
+/// محاذاة FittedBox لأسطر V1: وسط أفقيًا حتى لا يتراكم الفراغ على يسار السطر عندما يكون النص أضيق من عرض السطر بعد التحجيم.
+const Alignment _kV1FittedLineAlignment = Alignment.center;
+
 const double _v1PersistentHighlightAlpha = 0.18;
 const double _v1PersistentHighlightTopInsetFraction = 0.06;
 const double _v1PersistentHighlightHeightFraction = 0.88;
@@ -1054,6 +1057,7 @@ class _QuranReaderState extends State<QuranReader> {
             ),
             onSelectLine: onSelectLine,
             onClearSelection: onClearSelection,
+            lineTextHorizontallyCentered: true,
           );
         },
         child: content,
@@ -1067,7 +1071,9 @@ class _QuranReaderState extends State<QuranReader> {
     return Padding(
       padding: EdgeInsets.only(left: leftMargin, right: rightMargin),
       child: Align(
-        alignment: Alignment.centerRight,
+        // توسيط الكتلة عندما يكون عرض المحتوى أضيق من المساحة بين الهامشين
+        // حتى لا يتراكم الفراغ على جانب واحد فقط.
+        alignment: Alignment.center,
         child: result,
       ),
     );
@@ -1098,7 +1104,7 @@ class _QuranReaderState extends State<QuranReader> {
           width: double.infinity,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            alignment: alignment,
+            alignment: _kV1FittedLineAlignment,
             child: (line.lineType == 'basmallah')
                 ? Transform.translate(
                     offset: Offset(
@@ -1248,7 +1254,7 @@ class _QuranReaderState extends State<QuranReader> {
           width: double.infinity,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            alignment: alignment,
+            alignment: _kV1FittedLineAlignment,
             child: SizedBox(
               width: lineWidth,
               height: painter.height,
@@ -1352,7 +1358,7 @@ class _QuranReaderState extends State<QuranReader> {
           width: double.infinity,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            alignment: alignment,
+            alignment: _kV1FittedLineAlignment,
             child: SizedBox(
               width: lineWidth,
               height: painter.height,
@@ -1459,7 +1465,7 @@ class _QuranReaderState extends State<QuranReader> {
           width: double.infinity,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            alignment: alignment,
+            alignment: _kV1FittedLineAlignment,
             child: SizedBox(
               width: lineWidth,
               height: painter.height,

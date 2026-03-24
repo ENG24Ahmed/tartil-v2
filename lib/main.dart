@@ -19,10 +19,18 @@ class TartilApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'ترتيل',
-      home: SplashScreen(),
+      // يتجاهل تكبير/تصغير خط النظام حتى يبقى تخطيط المصحف والطبقات متسقاً.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(textScaler: TextScaler.noScaling),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      home: const SplashScreen(),
     );
   }
 }

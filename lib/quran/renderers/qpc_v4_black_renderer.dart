@@ -1064,7 +1064,8 @@ class QpcV4BlackPageView extends StatelessWidget {
                 bottom: bottomMargin,
               ),
               child: Align(
-                alignment: Alignment.centerLeft,
+                // توسيط الكتلة عندما يكون عرض المحتوى أضيق من المساحة بين الهامشين.
+                alignment: Alignment.center,
                 child: RepaintBoundary(
                   child: SizedBox(
                     width: pageWidth,

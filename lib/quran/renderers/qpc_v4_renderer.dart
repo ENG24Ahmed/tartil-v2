@@ -1353,7 +1353,8 @@ class QpcV4PageView extends StatelessWidget {
                 bottom: bottomMargin,
               ),
               child: Align(
-                alignment: Alignment.centerLeft,
+                // توسيط الكتلة عندما يكون عرض المحتوى أضيق من المساحة بين الهامشين.
+                alignment: Alignment.center,
                 child: RepaintBoundary(
                   child: SizedBox(
                     width: pageWidth,
@@ -2337,6 +2338,8 @@ void onQpcPageLongPress(
   void Function(List<(int lineIndex, int startChar, int endChar)>)?
       onSelectLine,
   void Function()? onClearSelection,
+  /// مصحف V1: السطر يُرسم بتوسيط أفقي داخل [contentW] (FittedBox). V4/V4 أسود: ملتصق بيمين السطر.
+  bool lineTextHorizontallyCentered = false,
 }) async {
   if (lineHeights.isEmpty || pageLines.isEmpty) return;
   // هامش تسامح عمودي: حدود التحديد قد تختلف قليلاً عن ترتيب العرض (خانات vs محتوى).
@@ -2362,7 +2365,9 @@ void onQpcPageLongPress(
   final lineStyle = lineStyleFor(line, baseStyle);
   final justifiedStyle = getJustifiedLineStyle(line, lineStyle, contentW);
   final lineWidth = _measureLineWidth(line.lineText, justifiedStyle);
-  final lineLeft = contentW - lineWidth;
+  final lineLeft = lineTextHorizontallyCentered
+      ? (contentW - lineWidth) / 2
+      : contentW - lineWidth;
   var tapXInText = localPosition.dx - lineLeft;
   // هامش تسامح على الجوانب: حدود التحديد قد تختلف قليلاً عن العرض الفعلي (FittedBox، هوامش).
   final xTolerance = (contentW * 0.06).clamp(4.0, 24.0);
