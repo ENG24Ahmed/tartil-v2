@@ -2482,7 +2482,8 @@ class _QuranPageViewerState extends State<QuranPageViewer> {
     switch (_mushafIntroStep) {
       case MushafIntroPrefs.stepTapMenu:
         await MushafIntroPrefs.setStep(MushafIntroPrefs.stepLongPress);
-        if (mounted) setState(() => _mushafIntroStep = MushafIntroPrefs.stepLongPress);
+        if (mounted)
+          setState(() => _mushafIntroStep = MushafIntroPrefs.stepLongPress);
         break;
       case MushafIntroPrefs.stepLongPress:
         await MushafIntroPrefs.setStep(MushafIntroPrefs.stepWaitPlayback);
@@ -4123,7 +4124,7 @@ class _QuranPageViewerState extends State<QuranPageViewer> {
   }
 
   Future<void> _showAboutDialog(BuildContext context) async {
-    String version = '2.0.0';
+    String version = '2.0.1';
     try {
       final info = await PackageInfo.fromPlatform();
       if (context.mounted) version = info.version;
@@ -8011,6 +8012,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
   List<int> _counts = [];
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+
   /// يُشغَّل عبر [AyahAudioPlayer.playAzkarAudio] — نفس مشغّل الآيات وإشعار الوسائط.
   int? _playingGroupIndex;
   bool _audioPlayerVisible = false;
@@ -8198,8 +8200,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
         _normalizeAzkarAudioUrl(widget.azkarList[index].audioUrl!.trim());
     final zikr = widget.azkarList[index];
     final rawTitle = (zikr.titleAr ?? zikr.title).trim();
-    final title =
-        rawTitle.isEmpty ? 'أذكار وأدعية' : rawTitle;
+    final title = rawTitle.isEmpty ? 'أذكار وأدعية' : rawTitle;
     setState(() {
       _playingGroupIndex = index;
       _audioPlayerVisible = true;

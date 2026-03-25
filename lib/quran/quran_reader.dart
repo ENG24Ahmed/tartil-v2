@@ -13,6 +13,7 @@ import 'package:quran_app/quran/renderers/qpc_v4_black_renderer.dart';
 import 'package:quran_app/quran/qpc_v1_loader.dart'
     show loadQpcV1PageForDisplay, tryGetQpcV1FromCache;
 import 'package:quran_app/quran/compact_line_spacing_scope.dart';
+import 'package:quran_app/quran/mushaf_stable_viewport.dart';
 import 'package:quran_app/audio/ayah_audio_player.dart';
 import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
     show
@@ -137,56 +138,62 @@ class _V1WavyHighlightPainter extends CustomPainter {
 }
 
 /// مكوّن صفحة واحد يُستخدم في جميع أنواع العرض (افتراضي، أفقي، صفحتان، قراءة طويلة).
+/// يُلف داخل [MushafStableViewport] لعزل التخطيط عن حجم العرض المنطقي وتكبير النص من النظام.
 Widget buildQpcPageContent(
   BuildContext context,
   int page,
   QpcMushafMode mode, {
   bool forceWhiteMushafText = false,
 }) {
-  if (mode == QpcMushafMode.qpc4) return QpcV4PageView(page: page);
-  if (mode == QpcMushafMode.qpc4Black) {
-    return QpcV4BlackPageView(
+  final Widget inner;
+  if (mode == QpcMushafMode.qpc4) {
+    inner = QpcV4PageView(page: page);
+  } else if (mode == QpcMushafMode.qpc4Black) {
+    inner = QpcV4BlackPageView(
       page: page,
       forceWhiteTextOnDark: forceWhiteMushafText,
     );
-  }
-  final cached = tryGetQpcV1FromCache(page);
-  if (cached != null) {
-    return _QpcV1PageFromLinesWidget(
-      page: page,
-      pageLines: cached,
-      forceWhiteMushafText: forceWhiteMushafText,
-    );
-  }
-  return FutureBuilder<List<MushafPageLine>>(
-    future: loadQpcV1PageForDisplay(page),
-    builder: (context, snapshot) {
-      if (snapshot.connectionState == ConnectionState.waiting) {
-        return const ColoredBox(color: Colors.transparent);
-      }
-      if (snapshot.hasError) {
-        return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              'فشل تحميل الصفحة: ${snapshot.error}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16),
-            ),
-          ),
-        );
-      }
-      final pageLines = snapshot.data ?? [];
-      if (pageLines.isEmpty) {
-        return const Center(child: Text('لا توجد بيانات لهذه الصفحة'));
-      }
-      return _QpcV1PageFromLinesWidget(
+  } else {
+    final cached = tryGetQpcV1FromCache(page);
+    if (cached != null) {
+      inner = _QpcV1PageFromLinesWidget(
         page: page,
-        pageLines: pageLines,
+        pageLines: cached,
         forceWhiteMushafText: forceWhiteMushafText,
       );
-    },
-  );
+    } else {
+      inner = FutureBuilder<List<MushafPageLine>>(
+        future: loadQpcV1PageForDisplay(page),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const ColoredBox(color: Colors.transparent);
+          }
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'فشل تحميل الصفحة: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+            );
+          }
+          final pageLines = snapshot.data ?? [];
+          if (pageLines.isEmpty) {
+            return const Center(child: Text('لا توجد بيانات لهذه الصفحة'));
+          }
+          return _QpcV1PageFromLinesWidget(
+            page: page,
+            pageLines: pageLines,
+            forceWhiteMushafText: forceWhiteMushafText,
+          );
+        },
+      );
+    }
+  }
+  return MushafStableViewport(child: inner);
 }
 
 /// عرض صفحة QPC V1 من الأسطر المحملة (يُستخدم من buildQpcPageContent).
