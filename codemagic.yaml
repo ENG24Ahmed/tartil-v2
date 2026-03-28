@@ -1,22 +1,91 @@
+# Codemagic — بناء IPA لمشروع quran_app (ترتيل)
+# Bundle ID: com.ahmed.tartil | Target: Runner | Workspace: ios/Runner.xcworkspace
+#
+# مطلوب في لوحة Codemagic:
+# 1) تكامل App Store Connect (API Key) أو مجموعة متغيرات تحتوي شهادات التوقيع.
+# 2) متغير APP_BUNDLE_IDENTIFIER = com.ahmed.tartil (أو استخدام BUNDLE_ID أدناه).
+#
+# ترتيب التنفيذ يمنع أخطاء xcodebuild (مثل 64) الناتجة عن غياب Pods أو scheme خاطئ:
+#   flutter pub get → يولّد ios/Flutter/Generated.xcconfig
+#   pod install → يربط الإضافات ويحدّث Runner.xcworkspace
+#   flutter build ipa → archive + export باستخدام ios/ExportOptions.plist
+
 workflows:
-  ios-workflow:
-    name: iOS Build
-    max_build_duration: 60
+  ios-ipa-release:
+    name: iOS IPA — Runner (app-store)
+    max_build_duration: 120
+    instance_type: mac_mini_m2
     environment:
       flutter: stable
       xcode: latest
+      cocoapods: default
+      vars:
+        # يطابق PRODUCT_BUNDLE_IDENTIFIER في ios/Runner.xcodeproj
+        APP_BUNDLE_IDENTIFIER: com.ahmed.tartil
+        BUNDLE_ID: com.ahmed.tartil
+        XCODE_WORKSPACE: ios/Runner.xcworkspace
+        XCODE_SCHEME: Runner
+      groups:
+        # أضف هنا مجموعة تحتوي: App Store Connect API / توقيع iOS (Codemagic)
+        - ios_signing
+    integrations:
+      app_store_connect: codemagic
     scripts:
-      - flutter pub get
-      - flutter build ios --release --no-codesign
-      - mkdir -p build/ios/ipa
-      - xcodebuild -workspace ios/Runner.xcworkspace \
-          -scheme Runner \
-          -sdk iphoneos \
-          -configuration Release \
-          archive -archivePath build/Runner.xcarchive
-      - xcodebuild -exportArchive \
-          -archivePath build/Runner.xcarchive \
-          -exportPath build/ios/ipa \
-          -exportOptionsPlist ios/ExportOptions.plist
+      - name: التحقق من وجود الملفات الأساسية
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          test -f pubspec.yaml
+          test -f ios/Runner.xcworkspace/contents.xcworkspacedata
+          test -f ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+          test -f ios/Podfile
+          test -f ios/ExportOptions.plist
+          echo "OK: workspace + scheme + Podfile + ExportOptions"
+
+      - name: تهيئة سلسلة المفاتيح وجلب ملفات التوقيع (Codemagic)
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          keychain initialize
+          # يتطلب تكامل App Store Connect و APP_BUNDLE_IDENTIFIER
+          app-store-connect fetch-signing-files "$APP_BUNDLE_IDENTIFIER" \
+            --type IOS_APP_STORE \
+            --create
+
+      - name: تطبيق ملفات التعريف على مشروع Xcode
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          xcode-project use-profiles
+
+      - name: Flutter — pub get (يولّد Generated.xcconfig والملحقات)
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter --version
+          flutter pub get
+
+      - name: CocoaPods — pod install (تحديث workspace وربط Pods)
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR/ios"
+          pod install --repo-update
+
+      - name: التحقق — scheme و targets (كشف أخطاء -scheme مبكراً)
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          xcodebuild -list -workspace "$XCODE_WORKSPACE"
+          echo "Expected scheme: $XCODE_SCHEME"
+
+      - name: Flutter build ipa — Release + export
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter build ipa \
+            --release \
+            --export-options-plist=ios/ExportOptions.plist
+
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
