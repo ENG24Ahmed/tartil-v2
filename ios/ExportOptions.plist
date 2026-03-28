@@ -2,7 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- توزيع متجر التطبيقات / TestFlight — يطابق flutter build ipa -->
+	<!-- Codemagic workflow الحالي (ios-ipa-unsigned) لا يستخدم xcodebuild -exportArchive -->
+	<!-- لأن التصدير يتطلب توقيعاً. الـ IPA يُنشأ من zip لـ Payload/Runner.app بعد flutter build ios --no-codesign -->
+	<key>CodemagicUnsignedWorkflow</key>
+	<true/>
+	<key>Description</key>
+	<string>Reserved for future signed builds (flutter build ipa --export-options-plist). Not used for unsigned CI.</string>
+	<!-- مثال لتوزيع موقّع لاحقاً — لا تُنفَّذ في البناء غير الموقّع -->
 	<key>method</key>
 	<string>app-store</string>
 	<key>signingStyle</key>
@@ -15,7 +21,6 @@
 	<false/>
 	<key>stripSwiftSymbols</key>
 	<true/>
-	<!-- الإصدار من pubspec؛ لا ترفع رقم البناء تلقائياً من هنا -->
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 </dict>

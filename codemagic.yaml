@@ -1,18 +1,20 @@
-# Codemagic — بناء IPA لمشروع quran_app (ترتيل)
-# Bundle ID: com.ahmed.tartil | Target: Runner | Workspace: ios/Runner.xcworkspace
+# =============================================================================
+# Codemagic — quran_app (ترتيل) — بناء IPA بدون توقيع Apple
+# =============================================================================
+# Workspace: ios/Runner.xcworkspace
+# Scheme:    Runner (مشترك في ios/Runner.xcodeproj/xcshareddata/xcschemes/)
 #
-# مطلوب في لوحة Codemagic:
-# 1) تكامل App Store Connect (API Key) أو مجموعة متغيرات تحتوي شهادات التوقيع.
-# 2) متغير APP_BUNDLE_IDENTIFIER = com.ahmed.tartil (أو استخدام BUNDLE_ID أدناه).
+# لا يُستخدم: App Store Connect، keychain signing، fetch-signing-files،
+#             xcode-project use-profiles، flutter build ipa (يتطلب توقيعاً).
 #
-# ترتيب التنفيذ يمنع أخطاء xcodebuild (مثل 64) الناتجة عن غياب Pods أو scheme خاطئ:
-#   flutter pub get → يولّد ios/Flutter/Generated.xcconfig
-#   pod install → يربط الإضافات ويحدّث Runner.xcworkspace
-#   flutter build ipa → archive + export باستخدام ios/ExportOptions.plist
+# الطريقة: flutter build ios --release --no-codesign ثم تجميع IPA من Runner.app
+# (هيكل Payload/Runner.app كما يتوقع نظام تثبيت IPA). ملف ExportOptions.plist
+# محفوظ للتوثيق وللاستخدام لاحقاً مع توقيع؛ لا يُستدعى في هذا الـ workflow.
+# =============================================================================
 
 workflows:
-  ios-ipa-release:
-    name: iOS IPA — Runner (app-store)
+  ios-ipa-unsigned:
+    name: iOS unsigned IPA — Runner (no Apple signing)
     max_build_duration: 120
     instance_type: mac_mini_m2
     environment:
@@ -20,72 +22,78 @@ workflows:
       xcode: latest
       cocoapods: default
       vars:
-        # يطابق PRODUCT_BUNDLE_IDENTIFIER في ios/Runner.xcodeproj
-        APP_BUNDLE_IDENTIFIER: com.ahmed.tartil
-        BUNDLE_ID: com.ahmed.tartil
+        # يطابق المشروع الفعلي (Runner.xcworkspace / scheme Runner)
         XCODE_WORKSPACE: ios/Runner.xcworkspace
         XCODE_SCHEME: Runner
-      groups:
-        # أضف هنا مجموعة تحتوي: App Store Connect API / توقيع iOS (Codemagic)
-        - ios_signing
-    integrations:
-      app_store_connect: codemagic
+        IPA_NAME: quran_app_unsigned.ipa
     scripts:
-      - name: التحقق من وجود الملفات الأساسية
+      - name: التحقق من بنية المشروع وملفات iOS
         script: |
-          set -e
-          cd "$CM_BUILD_DIR"
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
           test -f pubspec.yaml
           test -f ios/Runner.xcworkspace/contents.xcworkspacedata
           test -f ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
           test -f ios/Podfile
-          test -f ios/ExportOptions.plist
-          echo "OK: workspace + scheme + Podfile + ExportOptions"
+          echo "OK: pubspec + Runner.xcworkspace + scheme Runner + Podfile"
 
-      - name: تهيئة سلسلة المفاتيح وجلب ملفات التوقيع (Codemagic)
+      - name: Flutter pub get (يولّد ios/Flutter/Generated.xcconfig والملحقات)
         script: |
-          set -e
-          cd "$CM_BUILD_DIR"
-          keychain initialize
-          # يتطلب تكامل App Store Connect و APP_BUNDLE_IDENTIFIER
-          app-store-connect fetch-signing-files "$APP_BUNDLE_IDENTIFIER" \
-            --type IOS_APP_STORE \
-            --create
-
-      - name: تطبيق ملفات التعريف على مشروع Xcode
-        script: |
-          set -e
-          cd "$CM_BUILD_DIR"
-          xcode-project use-profiles
-
-      - name: Flutter — pub get (يولّد Generated.xcconfig والملحقات)
-        script: |
-          set -e
-          cd "$CM_BUILD_DIR"
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
           flutter --version
           flutter pub get
 
-      - name: CocoaPods — pod install (تحديث workspace وربط Pods)
+      - name: CocoaPods — pod install (يربط الإضافات ويحدّث workspace)
         script: |
-          set -e
-          cd "$CM_BUILD_DIR/ios"
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}/ios"
           pod install --repo-update
 
-      - name: التحقق — scheme و targets (كشف أخطاء -scheme مبكراً)
+      - name: التحقق — scheme Runner داخل Workspace (يكشف أخطاء xcodebuild 64 مبكراً)
         script: |
-          set -e
-          cd "$CM_BUILD_DIR"
-          xcodebuild -list -workspace "$XCODE_WORKSPACE"
-          echo "Expected scheme: $XCODE_SCHEME"
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
+          xcodebuild -list -workspace "${XCODE_WORKSPACE}"
 
-      - name: Flutter build ipa — Release + export
+      - name: بناء iOS Release بدون أكواد توقيع (لا يحتاج حساب Apple)
         script: |
-          set -e
-          cd "$CM_BUILD_DIR"
-          flutter build ipa \
-            --release \
-            --export-options-plist=ios/ExportOptions.plist
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
+          flutter build ios --release --no-codesign
+
+      - name: تجميع IPA من Runner.app (unsigned — Payload + zip)
+        script: |
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
+          OUT_IPA="${IPA_NAME:-quran_app_unsigned.ipa}"
+          RUNNER_APP=""
+          for cand in \
+            "build/ios/Release-iphoneos/Runner.app" \
+            "build/ios/iphoneos/Runner.app"; do
+            if [ -d "${cand}" ]; then RUNNER_APP="${cand}"; break; fi
+          done
+          if [ -z "${RUNNER_APP}" ]; then
+            RUNNER_APP="$(find build/ios -type d -name "Runner.app" 2>/dev/null | grep -E 'iphoneos|Release-iphoneos' | head -n 1 || true)"
+          fi
+          if [ -z "${RUNNER_APP}" ]; then
+            RUNNER_APP="$(find build/ios -type d -name "Runner.app" 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "${RUNNER_APP}" ] || [ ! -d "${RUNNER_APP}" ]; then
+            echo "ERROR: لم يُعثر على Runner.app تحت build/ios"
+            find build/ios -maxdepth 8 -type d 2>/dev/null || true
+            exit 1
+          fi
+          echo "Using Runner.app at: ${RUNNER_APP}"
+          rm -rf build/ios/ipa
+          mkdir -p build/ios/ipa
+          STAGING="$(mktemp -d)"
+          mkdir -p "${STAGING}/Payload"
+          cp -R "${RUNNER_APP}" "${STAGING}/Payload/"
+          (cd "${STAGING}" && zip -qry "${CM_BUILD_DIR}/build/ios/ipa/${OUT_IPA}" Payload)
+          rm -rf "${STAGING}"
+          ls -la build/ios/ipa/
+          echo "IPA ready: build/ios/ipa/${OUT_IPA}"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
