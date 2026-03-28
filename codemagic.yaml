@@ -97,3 +97,27 @@ workflows:
 
     artifacts:
       - build/ios/ipa/*.ipa
+
+  # ---------------------------------------------------------------------------
+  # محاكي iOS — Runner.app + zip لـ Appetize (لا IPA، لا ExportOptions، لا توقيع متجر)
+  # ---------------------------------------------------------------------------
+  ios-simulator-appetize:
+    name: iOS Simulator .app + zip (Appetize)
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        ZIP_NAME: Runner_simulator_appetize.zip
+    scripts:
+      - name: بناء محاكي + نسخ إلى build/ios/iphonesimulator + zip
+        script: |
+          set -euo pipefail
+          cd "${CM_BUILD_DIR}"
+          chmod +x scripts/build_ios_simulator_appetize.sh
+          export ZIP_NAME="${ZIP_NAME:-Runner_simulator_appetize.zip}"
+          ./scripts/build_ios_simulator_appetize.sh
+    artifacts:
+      - build/ios/iphonesimulator/*.zip
