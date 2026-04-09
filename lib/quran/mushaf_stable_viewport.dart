@@ -18,7 +18,8 @@ class MushafStableViewport extends StatelessWidget {
   /// قيمة مرجعية ثابتة لكثافة العرض المنطقية (ليست كثافة الجهاز الحالية).
   /// تثبيت `physical / kReferenceDevicePixelRatio` يعادل تعويضًا عكسيًا لأثر تغيّر
   /// الـ DPR مع ثبات البكسل الفيزيائي للمنطقة.
-  static const double kReferenceDevicePixelRatio = 3.0;
+  /// أعلى قليلاً من 3.0 يكبّر المحتوى المنطقي عند الـ FittedBox فيُقلّل الفراغ الجانبي الناتج عن contain.
+  static const double kReferenceDevicePixelRatio = 3.35;
 
   final Widget child;
 

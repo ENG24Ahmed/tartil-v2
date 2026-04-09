@@ -92,7 +92,7 @@ class _SplashScreenState extends State<SplashScreen>
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _version = '2.0');
+        setState(() => _version = '2.1.18');
       }
     }
 

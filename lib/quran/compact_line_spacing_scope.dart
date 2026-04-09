@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 /// عند true: مسافة أصغر بين الأسطر (للعرض الأفقي فقط).
 const double kCompactLinePaddingBottom = 1.0;
-const double kNormalLinePaddingBottom = 7.0;
+const double kNormalLinePaddingBottom = 4.0;
 
-/// في العرض الأفقي: هوامش 2% على أطراف الأسطر.
+/// في العرض الأفقي: هوامش على أطراف الأسطر (نفس نسبة هوامش الصفحة الجانبية).
 const double kCompactMarginFraction = 0.02;
 
 /// الهامش السفلي في العرض الأفقي مخفّض لرفع الخط البرتقالي.

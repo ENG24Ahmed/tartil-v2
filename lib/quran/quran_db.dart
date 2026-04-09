@@ -110,6 +110,27 @@ class QuranDb {
         .toList();
   }
 
+  /// نص QPC1 لكل [word_number_all] في النطاق (مع الحفاظ على الفهارس الفعلية).
+  Future<Map<int, String>> getQpcV1TextByWordNumberAll(
+      int minId, int maxId) async {
+    final out = <int, String>{};
+    try {
+      await init();
+      final rows = await db.query(
+        'words',
+        columns: ['word_number_all', 'qpc_v1'],
+        where: 'word_number_all >= ? AND word_number_all <= ?',
+        whereArgs: [minId, maxId],
+        orderBy: 'word_number_all ASC',
+      );
+      for (final r in rows) {
+        final id = _toInt(r['word_number_all']);
+        out[id] = r['qpc_v1']?.toString() ?? '';
+      }
+    } catch (_) {}
+    return out;
+  }
+
   Future<Map<int, bool>> getAyahMarkerByWordNumberAll(int minId, int maxId) async {
     final out = <int, bool>{};
     try {

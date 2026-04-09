@@ -7,22 +7,36 @@ import 'package:quran_app/quran/quran_db.dart';
 const String _v1CacheMode = 'qpc1';
 
 bool _hasValidSegments(List<MushafPageLine> lines) {
-  return lines.isNotEmpty &&
-      lines.every((l) =>
-          l.lineType != 'ayah' ||
-          l.rangeStart == null ||
-          (l.ayahSegments != null && l.ayahSegments!.isNotEmpty));
+  if (lines.isEmpty) return false;
+  var hasAyah = false;
+  var hasAnyMarkerFlag = false;
+  for (final l in lines) {
+    if (l.lineType != 'ayah' || l.rangeStart == null || l.rangeEnd == null) {
+      continue;
+    }
+    hasAyah = true;
+    final segs = l.ayahSegments;
+    if (segs == null || segs.isEmpty) return false;
+    final expectedCount = l.rangeEnd! - l.rangeStart! + 1;
+    if (expectedCount > 0 && segs.length != expectedCount) return false;
+    if (!hasAnyMarkerFlag && segs.any((s) => s.isMarker)) {
+      hasAnyMarkerFlag = true;
+    }
+  }
+  // ترحيل تلقائي للكاش القديم: كان يخزن isMarker=false لكل الكلمات.
+  if (hasAyah && !hasAnyMarkerFlag) return false;
+  return true;
 }
 
-/// استرجاع فوري من الكاش فقط — لتجنب ومضة التحميل عند التقليب.
+/// استرجاع فوري من كاش الرام (نافذة قريبة من الصفحة الحالية فقط).
 List<MushafPageLine>? tryGetQpcV1FromCache(int page) {
   final cached = PageCache.instance.get(_v1CacheMode, page);
   if (cached != null && _hasValidSegments(cached)) return cached;
   return null;
 }
 
-/// تحميل صفحة QPC V1 للعرض: كاش أولاً، ثم التخزين الدائم، ثم قاعدة البيانات.
-/// مهم: تحميل الخط قبل إرجاع بيانات من الكاش/التخزين لتجنب رموز غريبة عند إعادة فتح التطبيق.
+/// تحميل صفحة QPC V1 للعرض: كاش الرام، ثم التخزين الدائم، ثم قاعدة البيانات.
+/// مهم: تحميل الخط قبل إرجاع البيانات لتجنب رموز غريبة عند إعادة فتح التطبيق.
 Future<List<MushafPageLine>> loadQpcV1PageForDisplay(int page) async {
   await loadQcfFont(page);
   final cached = PageCache.instance.get(_v1CacheMode, page);
@@ -46,6 +60,25 @@ Future<List<MushafPageLine>> loadQpcV1Page(int page) async {
   final layout = await db.getLayoutForPage(page);
   final fontFamily = 'QCF_P${page.toString().padLeft(3, '0')}';
   final lines = <MushafPageLine>[];
+
+  int minRangeStart = 0;
+  int maxRangeEnd = 0;
+  for (final row in layout) {
+    final rowType = row['type']?.toString().trim().toLowerCase() ?? '';
+    if (rowType != 'ayah') continue;
+    final rs = row['range_start'] as int? ?? 0;
+    final re = row['range_end'] as int? ?? 0;
+    if (rs <= 0 || re < rs) continue;
+    if (minRangeStart == 0 || rs < minRangeStart) minRangeStart = rs;
+    if (re > maxRangeEnd) maxRangeEnd = re;
+  }
+
+  final textById = (minRangeStart > 0 && maxRangeEnd >= minRangeStart)
+      ? await db.getQpcV1TextByWordNumberAll(minRangeStart, maxRangeEnd)
+      : <int, String>{};
+  final markerById = (minRangeStart > 0 && maxRangeEnd >= minRangeStart)
+      ? await db.getAyahMarkerByWordNumberAll(minRangeStart, maxRangeEnd)
+      : <int, bool>{};
 
   for (final row in layout) {
     final isCentered = row['is_centered'] as bool? ?? false;
@@ -81,13 +114,17 @@ Future<List<MushafPageLine>> loadQpcV1Page(int page) async {
 
     if (rangeStart <= 0 || rangeEnd < rangeStart) continue;
 
-    final qpcV1List = await db.getQpcV1InRange(rangeStart, rangeEnd);
-    final lineText = qpcV1List.join('');
+    final ayahSegments = <AyahSegment>[];
+    for (int id = rangeStart; id <= rangeEnd; id++) {
+      ayahSegments.add(
+        (
+          text: textById[id] ?? '',
+          isMarker: markerById[id] ?? false,
+        ),
+      );
+    }
+    final lineText = ayahSegments.map((s) => s.text).join();
     if (lineText.isEmpty) continue;
-
-    final ayahSegments = [
-      for (final word in qpcV1List) (text: word, isMarker: false),
-    ];
     lines.add(MushafPageLine(
       lineText: lineText,
       isCentered: isCentered,

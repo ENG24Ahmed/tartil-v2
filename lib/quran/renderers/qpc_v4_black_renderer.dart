@@ -1,27 +1,25 @@
+import 'dart:math' show min;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:quran_app/audio/ayah_audio_player.dart';
-import 'package:quran_app/quran/font_loader.dart';
+import 'package:quran_app/quran/font_loader.dart' show buildAfterQcf4FontLoaded;
 import 'package:quran_app/quran/models/mushaf_line.dart';
 import 'package:quran_app/quran/page_cache.dart';
+import 'package:quran_app/quran/mushaf_page_layout.dart';
+import 'package:quran_app/quran/mushaf_ayah_highlight.dart';
 import 'package:quran_app/quran/quran_db.dart';
 import 'package:quran_app/quran/compact_line_spacing_scope.dart'
-    show
-        CompactLineSpacingScope,
-        getCompactFontScaleFactor,
-        kCompactBottomMarginScale,
-        kCompactMarginFraction;
+    show CompactLineSpacingScope, getCompactFontScaleFactor;
 import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
     show
         AyahHighlightStore,
         DelayedLongPressDetector,
-        QpcV4Renderer,
         getQpcContentDimensions,
         getJustifiedLineStyle,
-        getQpcLineHeights,
         getAyahRangesForPage,
         getAyahWordRangeForPage,
-        kQpcPageMarginFraction,
+        loadQpcV4PageForDisplay,
         onQpcPageLongPress;
 
 /// نسبة ارتفاع إطار اسم السورة إلى عرضه (من viewBox sura_name.svg: 1621.5×171).
@@ -29,6 +27,7 @@ const double _surahFrameAspect = 171 / 1621.5;
 const String _surahNameFontFamily = 'SurahNameV4';
 const double _basmallahRaiseDy = -2.0;
 const String _basmallahFontFamily = 'KFGQPCHAFSUthmanicScript';
+const double _kBasmallahFontSize = 18;
 const double _persistentHighlightAlpha = 0.18;
 const double _persistentHighlightTopInsetFraction = 0.06;
 const double _persistentHighlightHeightFraction = 0.88;
@@ -79,6 +78,80 @@ Widget _buildPersistentHighlightSegmentBlack(
       ),
     ),
   );
+}
+
+double _blackAyahMarkerOverlayDy({
+  required String lineText,
+  required TextStyle lineStyle,
+  required bool isCentered,
+  required List<AyahSegment> ayahSegments,
+  required bool isCompactMode,
+}) {
+  int markerStart = -1;
+  int markerEnd = -1;
+  int cursor = 0;
+  for (final seg in ayahSegments) {
+    final next = cursor + seg.text.length;
+    if (seg.isMarker && seg.text.isNotEmpty) {
+      markerStart = cursor;
+      markerEnd = next;
+      break;
+    }
+    cursor = next;
+  }
+  final basePainter = TextPainter(
+    text: TextSpan(text: lineText, style: lineStyle),
+    textDirection: TextDirection.rtl,
+    textAlign: isCentered ? TextAlign.center : TextAlign.right,
+    maxLines: 1,
+    textScaler: TextScaler.noScaling,
+    textWidthBasis: TextWidthBasis.parent,
+  )..layout(maxWidth: double.infinity);
+  final markerPainter = TextPainter(
+    text: TextSpan(
+      style: lineStyle,
+      children: [
+        for (final seg in ayahSegments)
+          TextSpan(
+            text: seg.text,
+            style: lineStyle.copyWith(
+              color: seg.isMarker ? Colors.black : Colors.transparent,
+            ),
+          ),
+      ],
+    ),
+    textDirection: TextDirection.rtl,
+    textAlign: isCentered ? TextAlign.center : TextAlign.right,
+    maxLines: 1,
+    textScaler: TextScaler.noScaling,
+    textWidthBasis: TextWidthBasis.parent,
+  )..layout(maxWidth: double.infinity);
+  if (markerStart >= 0 && markerEnd > markerStart && markerEnd <= lineText.length) {
+    final markerSel = TextSelection(baseOffset: markerStart, extentOffset: markerEnd);
+    final baseBoxes = basePainter.getBoxesForSelection(markerSel);
+    final markerBoxes = markerPainter.getBoxesForSelection(markerSel);
+    if (baseBoxes.isNotEmpty && markerBoxes.isNotEmpty) {
+      final baseBox = baseBoxes.first;
+      final markerBox = markerBoxes.first;
+      // محاذاة حافة العلامة السفلية نفسها بدل baseline عام للسطر.
+      final bottomDelta = (baseBox.bottom - markerBox.bottom).toDouble();
+      // تعويض بصري صغير مرتبط بارتفاع العلامة نفسها (أثبت من قيمة ثابتة عامة).
+      final visualBiasDown =
+          (markerBox.toRect().height * 0.14).clamp(1.0, 2.0).toDouble();
+      // في الوضع الأفقي (compact) تظهر العلامة أعلى قليلًا بسبب اختلاف القياس.
+      final compactExtraDown = isCompactMode
+          ? ((lineStyle.fontSize ?? 23.0) * 0.03).clamp(0.35, 0.95).toDouble()
+          : 0.0;
+      return (bottomDelta + visualBiasDown + compactExtraDown)
+          .clamp(-6.0, 6.0)
+          .toDouble();
+    }
+  }
+  final baseBaseline =
+      basePainter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+  final markerBaseline =
+      markerPainter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+  return (baseBaseline - markerBaseline).clamp(-6.0, 6.0).toDouble();
 }
 
 class _WavyHighlightPainterBlack extends CustomPainter {
@@ -133,11 +206,6 @@ class _WavyHighlightPainterBlack extends CustomPainter {
   }
 }
 
-Future<List<MushafPageLine>> _loadFontThenLoadPageBlack(int page) async {
-  await loadQcf4Font(page);
-  return QpcV4Renderer.instance.loadPage(page);
-}
-
 class QpcV4BlackPageView extends StatelessWidget {
   const QpcV4BlackPageView({
     super.key,
@@ -151,7 +219,7 @@ class QpcV4BlackPageView extends StatelessWidget {
   Widget build(BuildContext context) {
     const baseStyle = TextStyle(
       fontSize: 23,
-      height: 1.52,
+      height: 1.45,
       letterSpacing: 0,
       wordSpacing: 0,
       fontFeatures: [FontFeature.disable('kern')],
@@ -159,20 +227,30 @@ class QpcV4BlackPageView extends StatelessWidget {
 
     final cached = PageCache.instance.get('qpc4', page);
     if (cached != null && cached.isNotEmpty) {
-      return _buildPageWithMapping(
-        context,
+      return buildAfterQcf4FontLoaded(
         page,
-        cached,
-        baseStyle,
-        forceWhiteTextOnDark: forceWhiteTextOnDark,
+        () => _buildPageWithMapping(
+          context,
+          page,
+          cached,
+          baseStyle,
+          forceWhiteTextOnDark: forceWhiteTextOnDark,
+        ),
+        placeholder: (context) => ColoredBox(
+          color: MushafPaperBackgroundScope.of(context),
+          child: const SizedBox.expand(),
+        ),
       );
     }
 
     return FutureBuilder<List<MushafPageLine>>(
-      future: _loadFontThenLoadPageBlack(page),
+      future: loadQpcV4PageForDisplay(page),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SizedBox.expand();
+          return ColoredBox(
+            color: MushafPaperBackgroundScope.of(context),
+            child: const SizedBox.expand(),
+          );
         }
         if (snapshot.hasError) {
           return Center(
@@ -201,8 +279,21 @@ class QpcV4BlackPageView extends StatelessWidget {
     );
   }
 
-  static TextStyle _lineStyleForBlack(
-      MushafPageLine line, TextStyle baseStyle) {
+  static TextStyle _lineStyleForBlack(MushafPageLine line, TextStyle baseStyle,
+      {double fontSizeScale = 1.0}) {
+    if (line.lineType == 'surah_name') {
+      return baseStyle.copyWith(
+          fontFamily: _surahNameFontFamily, fontSize: 22 * fontSizeScale);
+    }
+    if (line.lineType == 'basmallah') {
+      return TextStyle(
+        fontFamily: _basmallahFontFamily,
+        fontSize: _kBasmallahFontSize * fontSizeScale,
+        height: 1.15,
+        fontWeight: FontWeight.w600,
+        color: Colors.black,
+      );
+    }
     return baseStyle.copyWith(fontFamily: line.fontFamily);
   }
 
@@ -250,52 +341,115 @@ class QpcV4BlackPageView extends StatelessWidget {
     );
   }
 
-  static double _measureLineWidth(String text, TextStyle style) {
-    final p = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.rtl,
-      maxLines: 1,
-    )..layout(maxWidth: double.infinity);
-    return p.width;
+  /// سطر آية أسود: [ColorFiltered] يزيل ألوان التجويد المدمجة في خط QCF.
+  /// عند وجود علامة آية: طبقة ثانية [RichText] تلوّن العلامة فقط (الباقي شفاف).
+  /// بدون [StrutStyle]/[TextHeightBehavior] الإضافية — نفس مقاييس [Text] في QPC4 الملون
+  /// حتى لا يرتفع السطر قليلاً داخل الخانة.
+  static Widget _buildBlackAyahLine({
+    required String lineText,
+    required TextStyle lineStyle,
+    required Color glyphColor,
+    required bool isCentered,
+    required bool isCompactMode,
+    List<AyahSegment>? ayahSegments,
+    required Color ayahMarkerColor,
+  }) {
+    Text baseTextWidget() => Text(
+          lineText,
+          textDirection: TextDirection.rtl,
+          textAlign: isCentered ? TextAlign.center : TextAlign.right,
+          softWrap: false,
+          maxLines: 1,
+          overflow: TextOverflow.visible,
+          textScaler: TextScaler.noScaling,
+          textWidthBasis: TextWidthBasis.parent,
+          style: lineStyle,
+        );
+    final hasMarkerLayer = ayahSegments != null &&
+        ayahSegments.isNotEmpty &&
+        ayahSegments.any((s) => s.isMarker);
+    if (!hasMarkerLayer) {
+      return ColorFiltered(
+        colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
+        child: baseTextWidget(),
+      );
+    }
+    return Stack(
+      alignment: isCentered ? Alignment.topCenter : Alignment.topRight,
+      clipBehavior: Clip.none,
+      children: [
+        ColorFiltered(
+          colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
+          child: baseTextWidget(),
+        ),
+        Transform.translate(
+          offset: Offset(
+            0,
+            _blackAyahMarkerOverlayDy(
+              lineText: lineText,
+              lineStyle: lineStyle,
+              isCentered: isCentered,
+              ayahSegments: ayahSegments,
+              isCompactMode: isCompactMode,
+            ),
+          ),
+          child: RichText(
+            textDirection: TextDirection.rtl,
+            textAlign: isCentered ? TextAlign.center : TextAlign.right,
+            softWrap: false,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            textScaler: TextScaler.noScaling,
+            textWidthBasis: TextWidthBasis.parent,
+            text: TextSpan(
+              style: lineStyle,
+              children: [
+                for (final seg in ayahSegments)
+                  TextSpan(
+                    text: seg.text,
+                    style: lineStyle.copyWith(
+                      color:
+                          seg.isMarker ? ayahMarkerColor : Colors.transparent,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
-  static ({double left, double width})? _wordHighlightRect({
-    required TextPainter painter,
-    required String text,
-    required TextStyle style,
-    required int startChar,
-    required int endChar,
-  }) {
-    final start = startChar.clamp(0, text.length);
-    final end = endChar.clamp(0, text.length);
-    if (end <= start) return null;
-
-    final boxes = painter.getBoxesForSelection(
-      TextSelection(baseOffset: start, extentOffset: end),
-    );
-    double? left;
-    double? right;
-    for (final b in boxes) {
-      if (!b.left.isFinite || !b.right.isFinite) continue;
-      left = left == null || b.left < left ? b.left : left;
-      right = right == null || b.right > right ? b.right : right;
+  /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
+  static double _computeBlackUniformAyahScale(
+    List<MushafPageLine> displayLines,
+    double layoutW,
+    double slotHeight,
+    TextStyle effectiveBaseStyle,
+    double lineStyleFontSizeScale,
+  ) {
+    var minScale = 1.0;
+    for (final line in displayLines) {
+      if (line.lineType != 'ayah') continue;
+      final lineStyle = _lineStyleForBlack(line, effectiveBaseStyle,
+          fontSizeScale: lineStyleFontSizeScale);
+      final style = line.isCentered
+          ? lineStyle
+          : getJustifiedLineStyle(line, lineStyle, layoutW);
+      final p = TextPainter(
+        text: TextSpan(text: line.lineText, style: style),
+        textDirection: TextDirection.rtl,
+        maxLines: 1,
+      )..layout(maxWidth: double.infinity);
+      final w = p.width;
+      final h = p.height;
+      if (w <= 0 || h <= 0) continue;
+      final sw = layoutW / w;
+      final sh = slotHeight / h;
+      final s = min(1.0, min(sw, sh));
+      if (s < minScale) minScale = s;
     }
-    if (left != null && right != null && right > left) {
-      return (left: left, width: right - left);
-    }
-
-    final s = painter.getOffsetForCaret(TextPosition(offset: start), Rect.zero);
-    final e = painter.getOffsetForCaret(TextPosition(offset: end), Rect.zero);
-    var l = s.dx < e.dx ? s.dx : e.dx;
-    var w = (e.dx - s.dx).abs();
-    if (w <= 0.01) {
-      final prefixW = _measureLineWidth(text.substring(0, start), style);
-      final tokenW = _measureLineWidth(text.substring(start, end), style);
-      l = prefixW;
-      w = tokenW;
-    }
-    if (w <= 0.01) return null;
-    return (left: l, width: w);
+    return minScale;
   }
 
   static Widget _buildContent(
@@ -313,6 +467,11 @@ class QpcV4BlackPageView extends StatelessWidget {
     bool forceWhiteTextOnDark = false,
   }) {
     final glyphColor = forceWhiteTextOnDark ? Colors.white : Colors.black;
+
+    /// لون علامات نهاية الآية فوق طبقة [ColorFiltered] (غير ممرَّرة بـ srcIn).
+    final ayahEndMarkerColor = forceWhiteTextOnDark
+        ? const Color(0xFFFFAB91)
+        : const Color(0xFFB71C1C);
     final ayahSelectionColor = forceWhiteTextOnDark
         ? const Color(0xFFB3E5FC)
         : const Color.fromARGB(255, 45, 45, 45);
@@ -326,15 +485,14 @@ class QpcV4BlackPageView extends StatelessWidget {
         final isCompact = CompactLineSpacingScope.isCompact(context);
         final availableWidth = constraints.maxWidth;
         final availableHeight = constraints.maxHeight;
-        final marginFraction =
-            isCompact ? kCompactMarginFraction : kQpcPageMarginFraction;
-        final leftMargin = availableWidth * marginFraction;
-        final rightMargin = availableWidth * marginFraction;
-        final topMargin = availableHeight * marginFraction;
-        final bottomMargin = availableHeight *
-            (isCompact
-                ? marginFraction * kCompactBottomMarginScale
-                : marginFraction);
+        final seamlessLongScrollBody =
+            SeamlessLongScrollScope.isActive(context);
+        final metrics = computeMushafInnerLayoutMetrics(
+          maxWidth: availableWidth,
+          maxHeight: availableHeight,
+          isCompact: isCompact,
+          omitVerticalMargins: seamlessLongScrollBody,
+        );
 
         final compactBaseScale =
             isCompact ? getCompactFontScaleFactor(context) : 1.0;
@@ -350,7 +508,7 @@ class QpcV4BlackPageView extends StatelessWidget {
           prefitBaseStyle,
           linePaddingBottom: linePad,
         );
-        final availableContentW = availableWidth - leftMargin - rightMargin;
+        final availableContentW = metrics.innerWidth;
         final compactFitScale = (isCompact &&
                 prefitContentW > 0 &&
                 prefitContentW > availableContentW)
@@ -363,26 +521,57 @@ class QpcV4BlackPageView extends StatelessWidget {
               )
             : baseStyle;
 
-        var (baseContentW, contentH) = getQpcContentDimensions(
-          pageLines,
-          effectiveBaseStyle,
-          linePaddingBottom: linePad,
-        );
-        final lineHeights = getQpcLineHeights(
-          pageLines,
-          effectiveBaseStyle,
-          linePaddingBottom: linePad,
-        );
+        final contentW = metrics.innerWidth;
 
-        final contentW = isCompact ? availableContentW : baseContentW;
-
-        final lineHeightsBlack = List<double>.from(lineHeights);
-        for (var i = 0; i < pageLines.length; i++) {
-          if (pageLines[i].lineType == 'surah_name') {
-            lineHeightsBlack[i] = contentW * _surahFrameAspect + linePad;
+        const int slotsCount = kMushafLineSlotCount;
+        final displayLines = pageLines.length >= slotsCount
+            ? pageLines.sublist(0, slotsCount)
+            : pageLines;
+        MushafPageLine probeLine = displayLines.first;
+        for (final l in displayLines) {
+          if (l.lineType == 'ayah') {
+            probeLine = l;
+            break;
           }
         }
-        contentH = lineHeightsBlack.fold(0.0, (a, b) => a + b);
+        final slotNatural = metrics.slotHeight;
+        var bodyStyle = effectiveBaseStyle;
+        var bodyLinePad = linePad;
+        late double minSlotH;
+        late double layoutHeight;
+        late double slotHeight;
+        for (var squeezeIter = 0; squeezeIter < 8; squeezeIter++) {
+          final probeStyle =
+              bodyStyle.copyWith(fontFamily: probeLine.fontFamily);
+          minSlotH = mushafMinSlotHeightForAyahStyle(
+            ayahStyle: probeStyle,
+            linePaddingBottom: bodyLinePad,
+          );
+          final blockFit = slotNatural + 0.01 < minSlotH;
+          layoutHeight =
+              blockFit ? kMushafLineSlotCount * minSlotH : metrics.innerHeight;
+          slotHeight = blockFit ? minSlotH : slotNatural;
+          if (!blockFit || layoutHeight <= metrics.innerHeight + 0.5) {
+            break;
+          }
+          final squeeze = metrics.innerHeight / layoutHeight;
+          bodyStyle = bodyStyle.copyWith(
+            fontSize: (bodyStyle.fontSize ?? 23) * squeeze,
+          );
+          bodyLinePad *= squeeze;
+        }
+
+        final refBaseSize = effectiveBaseStyle.fontSize ?? 23;
+        final lineStyleFontScale = (isCompact ? fontScale : 1.0) *
+            ((bodyStyle.fontSize ?? 23) / refBaseSize);
+
+        final uniformAyahScale = _computeBlackUniformAyahScale(
+          displayLines,
+          contentW,
+          slotHeight,
+          bodyStyle,
+          lineStyleFontScale,
+        );
 
         final pageLinesWidgets = pageLines.asMap().entries.map((entry) {
           final lineIndex = entry.key;
@@ -391,7 +580,7 @@ class QpcV4BlackPageView extends StatelessWidget {
           if (line.lineType == 'surah_name') {
             final frameHeight = contentW * _surahFrameAspect;
             lineWidget = Padding(
-              padding: EdgeInsets.only(bottom: linePad),
+              padding: EdgeInsets.only(bottom: bodyLinePad),
               child: SizedBox(
                 width: contentW,
                 height: frameHeight,
@@ -413,16 +602,20 @@ class QpcV4BlackPageView extends StatelessWidget {
                           padding:
                               EdgeInsets.symmetric(horizontal: contentW * 0.08),
                           child: Text(
-                            line.lineText,
+                            mushafSurahTitleDisplayText(line.lineText),
                             textDirection: TextDirection.rtl,
                             textAlign: TextAlign.center,
                             maxLines: 1,
                             overflow: TextOverflow.visible,
-                            style: effectiveBaseStyle.copyWith(
-                              fontFamily: _surahNameFontFamily,
-                              fontSize: 20 * (isCompact ? fontScale : 1.0),
-                              color: glyphColor,
-                            ),
+                            style: getJustifiedLineStyle(
+                              line,
+                              _lineStyleForBlack(
+                                line,
+                                bodyStyle,
+                                fontSizeScale: lineStyleFontScale,
+                              ),
+                              contentW,
+                            ).copyWith(color: glyphColor),
                           ),
                         ),
                       ),
@@ -433,7 +626,7 @@ class QpcV4BlackPageView extends StatelessWidget {
             );
           } else if (line.lineType == 'basmallah') {
             lineWidget = Padding(
-              padding: EdgeInsets.only(bottom: linePad),
+              padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
                 alignment: Alignment.center,
                 child: SizedBox(
@@ -442,7 +635,7 @@ class QpcV4BlackPageView extends StatelessWidget {
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.center,
                     child: Transform.translate(
-                      offset: Offset(0, _basmallahRaiseDy * fontScale),
+                      offset: Offset(0, _basmallahRaiseDy * lineStyleFontScale),
                       child: Text(
                         line.lineText,
                         textDirection: TextDirection.rtl,
@@ -450,13 +643,11 @@ class QpcV4BlackPageView extends StatelessWidget {
                         softWrap: false,
                         maxLines: 1,
                         overflow: TextOverflow.visible,
-                        style: TextStyle(
-                          fontFamily: _basmallahFontFamily,
-                          fontSize: 22 * (isCompact ? fontScale : 1.0),
-                          height: 1.15,
-                          fontWeight: FontWeight.w600,
-                          color: glyphColor,
-                        ),
+                        style: _lineStyleForBlack(
+                          line,
+                          bodyStyle,
+                          fontSizeScale: lineStyleFontScale,
+                        ).copyWith(color: glyphColor),
                       ),
                     ),
                   ),
@@ -464,97 +655,60 @@ class QpcV4BlackPageView extends StatelessWidget {
               ),
             );
           } else {
-            Widget lineContent;
-            final lineStyle = getJustifiedLineStyle(
-              line,
-              effectiveBaseStyle.copyWith(fontFamily: line.fontFamily),
-              contentW,
+            final baseForLine = bodyStyle.copyWith(
+              fontSize: (bodyStyle.fontSize ?? 23) * uniformAyahScale,
             );
-            final segments = line.ayahSegments;
-            final hasMarkerInfo = segments != null &&
-                segments.isNotEmpty &&
-                segments.any((s) => s.isMarker);
-
-            if (hasMarkerInfo) {
-              // لون علامة الآية كي تظهر ملونة كما في quran_test (الخط قد لا يكون لونياً).
-              const Color ayahMarkerColor = Color(0xFFB71C1C); // أحمر غامق
-              final overlaySpans = <InlineSpan>[];
-              for (final seg in segments) {
-                if (seg.text.isEmpty) continue;
-                if (seg.isMarker) {
-                  overlaySpans.add(TextSpan(
-                    text: seg.text,
-                    style: lineStyle.copyWith(color: ayahMarkerColor),
-                  ));
-                } else {
-                  overlaySpans.add(
-                    TextSpan(
-                      text: seg.text,
-                      style: lineStyle.copyWith(color: Colors.transparent),
-                    ),
-                  );
-                }
-              }
-              lineContent = Stack(
-                children: [
-                  ColorFiltered(
-                    colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
-                    child: Text(
-                      line.lineText,
-                      textDirection: TextDirection.rtl,
-                      textAlign:
-                          line.isCentered ? TextAlign.center : TextAlign.right,
-                      softWrap: false,
-                      maxLines: 1,
-                      overflow: TextOverflow.visible,
-                      style: lineStyle,
-                    ),
-                  ),
-                  Transform.translate(
-                    offset: Offset(0, isCompact ? 6 : 3),
-                    child: RichText(
-                      textDirection: TextDirection.rtl,
-                      textAlign:
-                          line.isCentered ? TextAlign.center : TextAlign.right,
-                      maxLines: 1,
-                      overflow: TextOverflow.visible,
-                      text: TextSpan(style: lineStyle, children: overlaySpans),
+            final lineStyleStep = _lineStyleForBlack(
+              line,
+              baseForLine,
+              fontSizeScale: lineStyleFontScale,
+            );
+            final lineStyle =
+                getJustifiedLineStyle(line, lineStyleStep, contentW);
+            final lineContent = _buildBlackAyahLine(
+              lineText: line.lineText,
+              lineStyle: lineStyle,
+              glyphColor: glyphColor,
+              isCentered: line.isCentered,
+              isCompactMode: isCompact,
+              ayahSegments: line.ayahSegments,
+              ayahMarkerColor: ayahEndMarkerColor,
+            );
+            final lineWidth = mushafMeasureLineWidth(line.lineText, lineStyle);
+            final linePainter = mushafLaidOutRtlLinePainter(
+              line.lineText,
+              lineStyle,
+              lineWidth,
+            );
+            final lineH = linePainter.height;
+            Widget buildStableAyahShell(List<Widget> overlayWidgets) {
+              return Padding(
+                padding: EdgeInsets.only(bottom: bodyLinePad),
+                child: Align(
+                  alignment: line.isCentered
+                      ? Alignment.center
+                      : Alignment.centerRight,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: lineH,
+                    child: Align(
+                      alignment: line.isCentered
+                          ? Alignment.topCenter
+                          : Alignment.topRight,
+                      child: mushafHighlightLineStackFixed(
+                        lineWidth: lineWidth,
+                        lineHeight: lineH,
+                        lineText: lineContent,
+                        overlayWidgets: overlayWidgets,
+                      ),
                     ),
                   ),
-                ],
-              );
-            } else {
-              lineContent = Text(
-                line.lineText,
-                textDirection: TextDirection.rtl,
-                textAlign: line.isCentered ? TextAlign.center : TextAlign.right,
-                maxLines: 1,
-                overflow: TextOverflow.visible,
-                style: lineStyle,
-              );
-              lineContent = ColorFiltered(
-                colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
-                child: lineContent,
+                ),
               );
             }
 
-            lineWidget = Padding(
-              padding: EdgeInsets.only(bottom: linePad),
-              child: Align(
-                alignment:
-                    line.isCentered ? Alignment.center : Alignment.centerRight,
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: line.isCentered
-                        ? Alignment.center
-                        : Alignment.centerRight,
-                    child: lineContent,
-                  ),
-                ),
-              ),
-            );
+            lineWidget = buildStableAyahShell(const []);
+
             (int, int, int)? lineSelection;
             if (selection != null) {
               for (final e in selection) {
@@ -577,259 +731,126 @@ class QpcV4BlackPageView extends StatelessWidget {
               }
             }
             if (lineSelection != null &&
+                line.lineType == 'ayah' &&
                 lineSelection.$2 >= 0 &&
                 lineSelection.$3 > lineSelection.$2) {
-              final lineWidth = _measureLineWidth(line.lineText, lineStyle);
-              final painter = TextPainter(
-                text: TextSpan(text: line.lineText, style: lineStyle),
-                textDirection: TextDirection.rtl,
-                maxLines: 1,
-              )..layout(maxWidth: lineWidth);
-              final startOffset = painter.getOffsetForCaret(
-                  TextPosition(
-                      offset: lineSelection.$2.clamp(0, line.lineText.length)),
-                  Rect.zero);
-              final endOffset = painter.getOffsetForCaret(
-                  TextPosition(
-                      offset: lineSelection.$3.clamp(0, line.lineText.length)),
-                  Rect.zero);
-              final left =
-                  startOffset.dx < endOffset.dx ? startOffset.dx : endOffset.dx;
-              final width = (endOffset.dx - startOffset.dx).abs();
-              double? wordLeft;
-              double? wordWidth;
-              if (lineWordSelection != null &&
-                  lineWordSelection.$2 >= 0 &&
-                  lineWordSelection.$3 > lineWordSelection.$2) {
-                final rect = _wordHighlightRect(
-                  painter: painter,
-                  text: line.lineText,
-                  style: lineStyle,
-                  startChar: lineWordSelection.$2,
-                  endChar: lineWordSelection.$3,
-                );
-                if (rect != null) {
-                  wordLeft = rect.left;
-                  wordWidth = rect.width;
-                }
-              }
-              return Padding(
-                padding: EdgeInsets.only(bottom: linePad),
-                child: Align(
-                  alignment: line.isCentered
-                      ? Alignment.center
-                      : Alignment.centerRight,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: line.isCentered
-                          ? Alignment.center
-                          : Alignment.centerRight,
-                      child: SizedBox(
-                        width: lineWidth,
-                        height: painter.height,
-                        child: Stack(
-                          alignment: Alignment.centerRight,
-                          children: [
-                            lineContent,
-                            Positioned(
-                              left: left,
-                              top: 0,
-                              width: width,
-                              height: painter.height,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: ayahSelectionColor.withValues(
-                                      alpha: ayahSelectionAlpha),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                            if (wordLeft != null && wordWidth != null)
-                              Positioned(
-                                left: wordLeft,
-                                top: 0,
-                                width: wordWidth,
-                                height: painter.height,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: wordSelectionColor.withValues(
-                                        alpha: wordSelectionAlpha),
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-            if (lineSelection == null && linePersistentSelections.isNotEmpty) {
-              final lineWidth = _measureLineWidth(line.lineText, lineStyle);
-              final painter = TextPainter(
-                text: TextSpan(text: line.lineText, style: lineStyle),
-                textDirection: TextDirection.rtl,
-                maxLines: 1,
-              )..layout(maxWidth: lineWidth);
-              final persistentRects =
-                  <({double left, double width, Color color})>[];
-              for (final p in linePersistentSelections) {
-                final rect = _wordHighlightRect(
-                  painter: painter,
-                  text: line.lineText,
-                  style: lineStyle,
-                  startChar: p.$2,
-                  endChar: p.$3,
-                );
-                if (rect != null) {
-                  persistentRects
-                      .add((left: rect.left, width: rect.width, color: p.$4));
-                }
-              }
-              final mergedPersistentRects =
-                  _mergePersistentRectsByColorBlack(persistentRects);
-              if (mergedPersistentRects.isEmpty) return lineWidget;
-              double? wordLeft;
-              double? wordWidth;
-              if (lineWordSelection != null &&
-                  lineWordSelection.$2 >= 0 &&
-                  lineWordSelection.$3 > lineWordSelection.$2) {
-                final rect = _wordHighlightRect(
-                  painter: painter,
-                  text: line.lineText,
-                  style: lineStyle,
-                  startChar: lineWordSelection.$2,
-                  endChar: lineWordSelection.$3,
-                );
-                if (rect != null) {
-                  wordLeft = rect.left;
-                  wordWidth = rect.width;
-                }
-              }
-              return Padding(
-                padding: EdgeInsets.only(bottom: linePad),
-                child: Align(
-                  alignment: line.isCentered
-                      ? Alignment.center
-                      : Alignment.centerRight,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: line.isCentered
-                          ? Alignment.center
-                          : Alignment.centerRight,
-                      child: SizedBox(
-                        width: lineWidth,
-                        height: painter.height,
-                        child: Stack(
-                          alignment: Alignment.centerRight,
-                          children: [
-                            lineContent,
-                            ...mergedPersistentRects.map((rect) =>
-                                _buildPersistentHighlightSegmentBlack(
-                                    rect, painter.height)),
-                            if (wordLeft != null && wordWidth != null)
-                              Positioned(
-                                left: wordLeft,
-                                top: 0,
-                                width: wordWidth,
-                                height: painter.height,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: wordSelectionColor.withValues(
-                                        alpha: wordSelectionAlpha),
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-            if (lineWordSelection != null &&
-                lineWordSelection.$2 >= 0 &&
-                lineWordSelection.$3 > lineWordSelection.$2 &&
-                line.lineType == 'ayah') {
-              final lineWidth = _measureLineWidth(line.lineText, lineStyle);
-              final painter = TextPainter(
-                text: TextSpan(text: line.lineText, style: lineStyle),
-                textDirection: TextDirection.rtl,
-                maxLines: 1,
-              )..layout(maxWidth: lineWidth);
-              final rect = _wordHighlightRect(
+              final painter = mushafLaidOutRtlLinePainter(
+                  line.lineText, lineStyle, lineWidth);
+              final ayahR = mushafRangeHorizontalRectWithFallback(
                 painter: painter,
                 text: line.lineText,
                 style: lineStyle,
-                startChar: lineWordSelection.$2,
-                endChar: lineWordSelection.$3,
+                startChar: lineSelection.$2.clamp(0, line.lineText.length),
+                endChar: lineSelection.$3.clamp(0, line.lineText.length),
               );
-              if (rect == null) return lineWidget;
-              final wordLeft = rect.left;
-              final wordWidth = rect.width;
-              return Padding(
-                padding: EdgeInsets.only(bottom: linePad),
-                child: Align(
-                  alignment: line.isCentered
-                      ? Alignment.center
-                      : Alignment.centerRight,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: line.isCentered
-                          ? Alignment.center
-                          : Alignment.centerRight,
-                      child: SizedBox(
-                        width: lineWidth,
-                        height: painter.height,
-                        child: Stack(
-                          alignment: Alignment.centerRight,
-                          children: [
-                            lineContent,
-                            Positioned(
-                              left: wordLeft,
-                              top: 0,
-                              width: wordWidth,
-                              height: painter.height,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: ayahSelectionColor.withValues(
-                                      alpha: ayahSelectionAlpha),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+              final overlayWidgets = <Widget>[];
+              if (linePersistentSelections.isNotEmpty) {
+                final persistentRects =
+                    <({double left, double width, Color color})>[];
+                for (final h in linePersistentSelections) {
+                  final rect = mushafWordHighlightRect(
+                    painter: painter,
+                    text: line.lineText,
+                    style: lineStyle,
+                    startChar: h.$2.clamp(0, line.lineText.length),
+                    endChar: h.$3.clamp(0, line.lineText.length),
+                  );
+                  if (rect != null && rect.width > 0.01) {
+                    persistentRects
+                        .add((left: rect.left, width: rect.width, color: h.$4));
+                  }
+                }
+                for (final r
+                    in _mergePersistentRectsByColorBlack(persistentRects)) {
+                  overlayWidgets
+                      .add(_buildPersistentHighlightSegmentBlack(r, lineH));
+                }
+              }
+              overlayWidgets.add(
+                mushafFlatHighlightBar(
+                  left: ayahR.left,
+                  width: ayahR.width,
+                  lineHeight: lineH,
+                  color: ayahSelectionColor,
+                  alpha: ayahSelectionAlpha,
                 ),
               );
+              if (lineWordSelection != null &&
+                  lineWordSelection.$2 >= 0 &&
+                  lineWordSelection.$3 > lineWordSelection.$2) {
+                final wordR = mushafRangeHorizontalRectWithFallback(
+                  painter: painter,
+                  text: line.lineText,
+                  style: lineStyle,
+                  startChar:
+                      lineWordSelection.$2.clamp(0, line.lineText.length),
+                  endChar: lineWordSelection.$3.clamp(0, line.lineText.length),
+                );
+                if (wordR.width > 0.01) {
+                  overlayWidgets.add(mushafFlatHighlightBar(
+                    left: wordR.left,
+                    width: wordR.width,
+                    lineHeight: lineH,
+                    color: wordSelectionColor,
+                    alpha: wordSelectionAlpha,
+                  ));
+                }
+              }
+              return buildStableAyahShell(overlayWidgets);
+            }
+            if (lineSelection == null &&
+                linePersistentSelections.isNotEmpty &&
+                line.lineType == 'ayah') {
+              final painter = mushafLaidOutRtlLinePainter(
+                  line.lineText, lineStyle, lineWidth);
+              final rects = <({double left, double width, Color color})>[];
+              for (final h in linePersistentSelections) {
+                final rect = mushafWordHighlightRect(
+                  painter: painter,
+                  text: line.lineText,
+                  style: lineStyle,
+                  startChar: h.$2.clamp(0, line.lineText.length),
+                  endChar: h.$3.clamp(0, line.lineText.length),
+                );
+                if (rect != null && rect.width > 0.01) {
+                  rects.add((left: rect.left, width: rect.width, color: h.$4));
+                }
+              }
+              if (rects.isEmpty) return lineWidget;
+              final mergedRects = _mergePersistentRectsByColorBlack(rects);
+              return buildStableAyahShell([
+                for (final r in mergedRects)
+                  _buildPersistentHighlightSegmentBlack(r, lineH),
+              ]);
+            }
+            if (lineWordSelection != null &&
+                line.lineType == 'ayah' &&
+                lineWordSelection.$2 >= 0 &&
+                lineWordSelection.$3 > lineWordSelection.$2) {
+              final painter = mushafLaidOutRtlLinePainter(
+                  line.lineText, lineStyle, lineWidth);
+              final wordR = mushafRangeHorizontalRectWithFallback(
+                painter: painter,
+                text: line.lineText,
+                style: lineStyle,
+                startChar: lineWordSelection.$2.clamp(0, line.lineText.length),
+                endChar: lineWordSelection.$3.clamp(0, line.lineText.length),
+              );
+              if (wordR.width <= 0.01) return lineWidget;
+              return buildStableAyahShell([
+                mushafFlatHighlightBar(
+                  left: wordR.left,
+                  width: wordR.width,
+                  lineHeight: lineH,
+                  color: ayahSelectionColor,
+                  alpha: ayahSelectionAlpha,
+                ),
+              ]);
             }
             return lineWidget;
           }
           return lineWidget;
         }).toList();
-
-        // المسافة العمودية المتاحة بين الشريط العلوي ورقم الصفحة.
-        final fullH = availableHeight - topMargin - bottomMargin;
-        const int slotsCount = 15;
-        final slotHeight = fullH / slotsCount;
-
-        // نأخذ أول 15 سطراً فقط، والباقي يُهمل إن وُجد.
-        final displayLines = pageLines.length >= slotsCount
-            ? pageLines.sublist(0, slotsCount)
-            : pageLines;
 
         // نبني 15 خانة متساوية الارتفاع، ونضع في كل خانة سطراً أو خانة فارغة.
         final slots = <Widget>[];
@@ -838,193 +859,7 @@ class QpcV4BlackPageView extends StatelessWidget {
           // في الصفحتين 1 و 2 نترك أول 3 خانات فارغة، فيبدأ أول سطر من الخانة الرابعة.
           final srcIndex = (page == 1 || page == 2) ? i - 3 : i;
           if (srcIndex >= 0 && srcIndex < displayLines.length) {
-            final line = displayLines[srcIndex];
-            (int, int, int)? lineSelection;
-            if (selection != null) {
-              for (final r in selection) {
-                if (r.$1 == srcIndex) {
-                  lineSelection = r;
-                  break;
-                }
-              }
-            }
-            (int, int, int)? lineWordSelection;
-            if (wordSelection != null && wordSelection.$1 == srcIndex) {
-              lineWordSelection = wordSelection;
-            }
-
-            // نعيد استخدام منطق بناء السطر كما في pageLinesWidgets.
             lineChild = pageLinesWidgets[srcIndex];
-
-            // في حال كان هناك تحديد لآية في هذا السطر، نستخدم مسار overlay الخاص به.
-            if (lineSelection != null &&
-                lineSelection.$2 >= 0 &&
-                lineSelection.$3 > lineSelection.$2) {
-              final lineStyle = getJustifiedLineStyle(
-                line,
-                effectiveBaseStyle.copyWith(fontFamily: line.fontFamily),
-                contentW,
-              );
-              final lineWidth = _measureLineWidth(line.lineText, lineStyle);
-              final painter = TextPainter(
-                text: TextSpan(text: line.lineText, style: lineStyle),
-                textDirection: TextDirection.rtl,
-                maxLines: 1,
-              )..layout(maxWidth: lineWidth);
-              final startOffset = painter.getOffsetForCaret(
-                  TextPosition(
-                      offset: lineSelection.$2.clamp(0, line.lineText.length)),
-                  Rect.zero);
-              final endOffset = painter.getOffsetForCaret(
-                  TextPosition(
-                      offset: lineSelection.$3.clamp(0, line.lineText.length)),
-                  Rect.zero);
-              final left =
-                  startOffset.dx < endOffset.dx ? startOffset.dx : endOffset.dx;
-              final width = (endOffset.dx - startOffset.dx).abs();
-              double? wordLeft;
-              double? wordWidth;
-              if (lineWordSelection != null &&
-                  lineWordSelection.$2 >= 0 &&
-                  lineWordSelection.$3 > lineWordSelection.$2) {
-                final wStart = painter.getOffsetForCaret(
-                    TextPosition(
-                        offset: lineWordSelection.$2
-                            .clamp(0, line.lineText.length)),
-                    Rect.zero);
-                final wEnd = painter.getOffsetForCaret(
-                    TextPosition(
-                        offset: lineWordSelection.$3
-                            .clamp(0, line.lineText.length)),
-                    Rect.zero);
-                wordLeft = wStart.dx < wEnd.dx ? wStart.dx : wEnd.dx;
-                wordWidth = (wEnd.dx - wStart.dx).abs();
-              }
-
-              final hasMarkerInfo = line.ayahSegments != null &&
-                  line.ayahSegments!.isNotEmpty &&
-                  line.ayahSegments!.any((s) => s.isMarker);
-              Widget lineContent;
-              if (hasMarkerInfo) {
-                const Color ayahMarkerColor = Color(0xFFB71C1C);
-                final overlaySpans = <InlineSpan>[];
-                for (final seg in line.ayahSegments!) {
-                  if (seg.text.isEmpty) continue;
-                  if (seg.isMarker) {
-                    overlaySpans.add(TextSpan(
-                      text: seg.text,
-                      style: lineStyle.copyWith(color: ayahMarkerColor),
-                    ));
-                  } else {
-                    overlaySpans.add(TextSpan(
-                      text: seg.text,
-                      style: lineStyle.copyWith(color: Colors.transparent),
-                    ));
-                  }
-                }
-                lineContent = Stack(
-                  children: [
-                    ColorFiltered(
-                      colorFilter:
-                          ColorFilter.mode(glyphColor, BlendMode.srcIn),
-                      child: Text(
-                        line.lineText,
-                        textDirection: TextDirection.rtl,
-                        textAlign: line.isCentered
-                            ? TextAlign.center
-                            : TextAlign.right,
-                        softWrap: false,
-                        maxLines: 1,
-                        overflow: TextOverflow.visible,
-                        style: lineStyle,
-                      ),
-                    ),
-                    Transform.translate(
-                      offset: Offset(0, isCompact ? 6 : 3),
-                      child: RichText(
-                        textDirection: TextDirection.rtl,
-                        textAlign: line.isCentered
-                            ? TextAlign.center
-                            : TextAlign.right,
-                        maxLines: 1,
-                        overflow: TextOverflow.visible,
-                        text:
-                            TextSpan(style: lineStyle, children: overlaySpans),
-                      ),
-                    ),
-                  ],
-                );
-              } else {
-                lineContent = Text(
-                  line.lineText,
-                  textDirection: TextDirection.rtl,
-                  textAlign:
-                      line.isCentered ? TextAlign.center : TextAlign.right,
-                  maxLines: 1,
-                  overflow: TextOverflow.visible,
-                  style: lineStyle,
-                );
-                lineContent = ColorFiltered(
-                  colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
-                  child: lineContent,
-                );
-              }
-
-              lineChild = Padding(
-                padding: EdgeInsets.only(bottom: linePad),
-                child: Align(
-                  alignment: line.isCentered
-                      ? Alignment.center
-                      : Alignment.centerRight,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: line.isCentered
-                          ? Alignment.center
-                          : Alignment.centerRight,
-                      child: SizedBox(
-                        width: lineWidth,
-                        height: painter.height,
-                        child: Stack(
-                          alignment: Alignment.centerRight,
-                          children: [
-                            lineContent,
-                            Positioned(
-                              left: left,
-                              top: 0,
-                              width: width,
-                              height: painter.height,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: ayahSelectionColor.withValues(
-                                      alpha: ayahSelectionAlpha),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                            if (wordLeft != null && wordWidth != null)
-                              Positioned(
-                                left: wordLeft,
-                                top: 0,
-                                width: wordWidth,
-                                height: painter.height,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: wordSelectionColor.withValues(
-                                        alpha: wordSelectionAlpha),
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
           }
 
           slots.add(SizedBox(
@@ -1046,10 +881,54 @@ class QpcV4BlackPageView extends StatelessWidget {
         final lineHeights15 =
             List<double>.filled(slotsCount, slotHeight, growable: false);
 
-        // في العرض الأفقي (compact): نستخدم العرض الكامل من الأخضر للأحمر.
-        final availableW = availableWidth - leftMargin - rightMargin;
-        final pageWidth =
-            isCompact || (page == 1 || page == 2) ? availableW : contentW;
+        final availableW = metrics.innerWidth;
+        final pageWidth = availableW;
+
+        Widget buildBlackColumnBox() {
+          return SizedBox(
+            width: pageWidth,
+            height: layoutHeight,
+            child: mapping != null
+                ? DelayedLongPressDetector(
+                    duration: const Duration(milliseconds: 400),
+                    onTrigger: (Offset pos) {
+                      onQpcPageLongPress(
+                        context,
+                        pos,
+                        contentW,
+                        layoutHeight,
+                        lineHeights15,
+                        displayLines,
+                        bodyStyle,
+                        mapping,
+                        (line, base) => _lineStyleForBlack(
+                          line,
+                          base,
+                          fontSizeScale: lineStyleFontScale,
+                        ),
+                        onSelectLine: onSelectLine,
+                        onClearSelection: onClearSelection,
+                        uniformAyahScale: uniformAyahScale,
+                        hitTestColumnWidth: pageWidth,
+                        visualLineIndexOffset: (page == 1 || page == 2) ? 3 : 0,
+                      );
+                    },
+                    child: column15,
+                  )
+                : column15,
+          );
+        }
+
+        final columnAlign =
+            seamlessLongScrollBody ? Alignment.topCenter : Alignment.center;
+        final repaintChild = SizedBox(
+          width: metrics.innerWidth,
+          height: metrics.innerHeight,
+          child: Align(
+            alignment: columnAlign,
+            child: buildBlackColumnBox(),
+          ),
+        );
 
         return SingleChildScrollView(
           primary: false,
@@ -1058,42 +937,17 @@ class QpcV4BlackPageView extends StatelessWidget {
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
             child: Padding(
               padding: EdgeInsets.only(
-                left: leftMargin,
-                right: rightMargin,
-                top: topMargin,
-                bottom: bottomMargin,
+                left: metrics.leftMargin,
+                right: metrics.rightMargin,
+                top: metrics.topMargin,
+                bottom: metrics.bottomMargin,
               ),
               child: Align(
-                // توسيط الكتلة عندما يكون عرض المحتوى أضيق من المساحة بين الهامشين.
-                alignment: Alignment.center,
+                alignment: columnAlign,
                 child: RepaintBoundary(
-                  child: SizedBox(
-                    width: pageWidth,
-                    height: fullH,
-                    child: mapping != null
-                        ? DelayedLongPressDetector(
-                            duration: const Duration(milliseconds: 400),
-                            onTrigger: (Offset pos) {
-                              final adjustedPos = (page == 1 || page == 2)
-                                  ? pos.translate(0, -3 * slotHeight)
-                                  : pos;
-                              onQpcPageLongPress(
-                                context,
-                                adjustedPos,
-                                contentW,
-                                fullH,
-                                lineHeights15,
-                                displayLines,
-                                effectiveBaseStyle,
-                                mapping,
-                                _lineStyleForBlack,
-                                onSelectLine: onSelectLine,
-                                onClearSelection: onClearSelection,
-                              );
-                            },
-                            child: column15,
-                          )
-                        : column15,
+                  child: ColoredBox(
+                    color: MushafPaperBackgroundScope.of(context),
+                    child: repaintChild,
                   ),
                 ),
               ),

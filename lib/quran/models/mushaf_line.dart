@@ -1,6 +1,19 @@
 /// مقطع في سطر آية: النص + هل هو علامة آية (نحتفظ بلونها الأصلي).
 typedef AyahSegment = ({String text, bool isMarker});
 
+/// فراغ أوضح بين «سورة» واسم السورة داخل إطار العنوان (المسافة العادية تضيق بصرياً في خط العرض).
+String mushafSurahTitleDisplayText(String lineText) {
+  const prefix = 'سورة';
+  if (!lineText.startsWith(prefix)) return lineText;
+  var i = prefix.length;
+  while (i < lineText.length) {
+    final c = lineText.codeUnitAt(i);
+    if (c != 0x20 && c != 0x00a0 && c != 0x2009 && c != 0x2005) break;
+    i++;
+  }
+  return '$prefix\u2005${lineText.substring(i)}';
+}
+
 /// سطر واحد في صفحة المصحف (مشترك بين QPC V1 و V4).
 class MushafPageLine {
   final String lineText;

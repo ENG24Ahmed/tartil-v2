@@ -1,5 +1,6 @@
 import 'package:audio_session/audio_session.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/splash_screen.dart';

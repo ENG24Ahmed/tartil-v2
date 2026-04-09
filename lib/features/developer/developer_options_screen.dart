@@ -20,7 +20,6 @@ class DeveloperOptionsScreen extends StatefulWidget {
 class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
   int _persistedCount = 0;
   int _persistedSize = 0;
-  int _persistedBakedCount = 0;
   int _persistedRawCount = 0;
   int _persistedQpc1Count = 0;
 
@@ -35,8 +34,6 @@ class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
     final size = await PagePersistentCache.instance.totalSizeBytes;
     final qpc4Raw =
         await PagePersistentCache.instance.getPageCountForMode('qpc4');
-    final qpc4Baked =
-        await PagePersistentCache.instance.getBakedPageCountForMode('qpc4');
     final qpc1Count =
         await PagePersistentCache.instance.getPageCountForMode('qpc1');
     if (mounted) {
@@ -44,7 +41,6 @@ class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
         _persistedCount = count;
         _persistedSize = size;
         _persistedRawCount = qpc4Raw;
-        _persistedBakedCount = qpc4Baked;
         _persistedQpc1Count = qpc1Count;
       });
     }
@@ -67,11 +63,8 @@ class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
   @override
   Widget build(BuildContext context) {
     final cache = PageCache.instance;
-    final qpc1RawCount = cache.getRawPageCountForMode('qpc1');
-    final qpc4RawCount = cache.getRawPageCountForMode('qpc4');
-    final qpc4BakedCount = cache.getBakedPageCountForMode('qpc4');
-    final qpc4UniqueCount = cache.getPageCountForMode('qpc4');
-    final totalUniqueCount = cache.totalUniquePageCount;
+    final qpc1Count = cache.getPageCountForMode('qpc1');
+    final qpc4Count = cache.getPageCountForMode('qpc4');
     final totalEntriesCount = cache.totalCachedPageCount;
     final sizeBytes = cache.estimatedSizeBytes;
 
@@ -94,12 +87,9 @@ class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
                 _InfoCard(
                   title: 'عدد الصفحات المحملة (الذاكرة)',
                   items: [
-                    ('إجمالي فريد (حسب رقم الصفحة)', '$totalUniqueCount / 604'),
-                    ('إجمالي عناصر الكاش (خام + محسوب)', '$totalEntriesCount'),
-                    ('QPC V1 (خام)', '$qpc1RawCount'),
-                    ('QPC V4 (خام)', '$qpc4RawCount'),
-                    ('QPC V4 (محسوب)', '$qpc4BakedCount'),
-                    ('QPC V4 (فريد خام+محسوب)', '$qpc4UniqueCount / 604'),
+                    ('إجمالي الكاش', '$totalEntriesCount'),
+                    ('QPC V1', '$qpc1Count / 604'),
+                    ('QPC V4', '$qpc4Count / 604'),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -107,13 +97,8 @@ class _DeveloperOptionsScreenState extends State<DeveloperOptionsScreen> {
                   title: 'التخزين الدائم (ROM)',
                   items: [
                     ('إجمالي الملفات', '$_persistedCount'),
-                    ('QPC4 خام', '$_persistedRawCount / 604'),
-                    ('QPC4 محسوب', '$_persistedBakedCount'),
-                    (
-                      'QPC4 خام + محسوب',
-                      '${_persistedRawCount + _persistedBakedCount}'
-                    ),
-                    ('QPC1', '$_persistedQpc1Count'),
+                    ('QPC4', '$_persistedRawCount / 604'),
+                    ('QPC1', '$_persistedQpc1Count / 604'),
                     ('حجم الملفات', _formatBytes(_persistedSize)),
                   ],
                 ),

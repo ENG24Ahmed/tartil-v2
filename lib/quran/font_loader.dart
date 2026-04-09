@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 final Set<String> _loadedFonts = <String>{};
@@ -36,6 +37,42 @@ Future<void> loadQcf4Font(int page) async {
   loader.addFont(Future.value(fontData));
   await loader.load();
   _loadedFonts.add(fontName);
+}
+
+/// يضمن تسجيل خط صفحة التجويد في المحرك قبل بناء النص (مسارات الكاش السريعة).
+///
+/// إذا كان الخط محمّلاً مسبقاً يبني الصفحة **فوراً** بدون FutureBuilder لتفادي
+/// الوميض الناتج عن إطار الانتظار حتى مع Future فارية.
+Widget buildAfterQcf4FontLoaded(
+  int page,
+  Widget Function() builder, {
+  WidgetBuilder? placeholder,
+}) {
+  final fontName = 'QCF4_tajweed_${page.toString().padLeft(3, '0')}';
+  if (_loadedFonts.contains(fontName)) {
+    return builder();
+  }
+  return FutureBuilder<void>(
+    future: loadQcf4Font(page),
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return placeholder?.call(context) ?? const SizedBox.expand();
+      }
+      if (snapshot.hasError) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'فشل تحميل الخط: ${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
+          ),
+        );
+      }
+      return builder();
+    },
+  );
 }
 
 /// Loads the dedicated QCF4 basmallah font QCF4_BSML once. يجرب .ttf ثم .TTF.

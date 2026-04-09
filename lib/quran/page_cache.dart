@@ -1,9 +1,7 @@
-import 'package:quran_app/quran/models/baked_page_layout.dart';
 import 'package:quran_app/quran/models/mushaf_line.dart';
 
-/// In-memory cache for rendered Mushaf page lines.
-/// Cache key: 'qpc1' | 'qpc4' + '_' + pageNumber.
-/// نفس الآلية لـ qpc1 و qpc4: نافذة 5 صفحات (2 قبل الحالية، 2 بعدها).
+/// كاش ذاكرة لصفحات المصحف: يُبقى فقط **صفحتان قبل وبعد** الصفحة المركزية (معها = 5 صفحات).
+/// المفتاح: 'qpc1' | 'qpc4' + '_' + رقم الصفحة.
 class PageCache {
   PageCache._();
   static final PageCache instance = PageCache._();
@@ -15,24 +13,22 @@ class PageCache {
   static const int cacheWindowAfter = 2;
 
   final Map<String, List<MushafPageLine>> _cache = {};
-  final Map<String, BakedPageLayout> _bakedCache = {};
+
+  /// عند اكتمال تعبئة الرام للمصحف كاملاً (توسيع بعد ثبات): لا يُقلّص الكاش بالنافذة ٢+٢.
+  bool _skipTrimWhileFullMushafInRam = false;
+
+  bool get skipTrimWhileFullMushafInRam => _skipTrimWhileFullMushafInRam;
+
+  void setSkipTrimWhileFullMushafInRam(bool value) {
+    _skipTrimWhileFullMushafInRam = value;
+  }
 
   static String _key(String mode, int page) => '${mode}_$page';
-  static String _bakedKey(String mode, int page) => '${mode}_baked_$page';
 
   static int? _pageFromKey(String key) {
     final tail = key.split('_').last;
     return int.tryParse(tail);
   }
-
-  BakedPageLayout? getBaked(String mode, int page) =>
-      _bakedCache[_bakedKey(mode, page)];
-  void putBaked(String mode, int page, BakedPageLayout baked) {
-    _bakedCache[_bakedKey(mode, page)] = baked;
-  }
-
-  bool hasBaked(String mode, int page) =>
-      _bakedCache.containsKey(_bakedKey(mode, page));
 
   List<MushafPageLine>? get(String mode, int page) {
     return _cache[_key(mode, page)];
@@ -42,13 +38,39 @@ class PageCache {
     _cache[_key(mode, page)] = lines;
   }
 
+  /// إزالة صفوف [qpc1] و [qpc4] خارج النافذة حول [centerPage] لتقليل استهلاك الرام.
+  void trimRamToNearbyPages(
+    int centerPage, {
+    int before = cacheWindowBefore,
+    int after = cacheWindowAfter,
+    int totalPages = 604,
+  }) {
+    if (_skipTrimWhileFullMushafInRam) return;
+    final low = (centerPage - before).clamp(1, totalPages);
+    final high = (centerPage + after).clamp(1, totalPages);
+    for (final mode in const ['qpc1', 'qpc4']) {
+      final prefix = '${mode}_';
+      final toRemove = <String>[];
+      for (final k in _cache.keys) {
+        if (!k.startsWith(prefix)) continue;
+        final pg = _pageFromKey(k);
+        if (pg == null || pg < low || pg > high) {
+          toRemove.add(k);
+        }
+      }
+      for (final k in toRemove) {
+        _cache.remove(k);
+      }
+    }
+  }
+
   bool has(String mode, int page) {
     return _cache.containsKey(_key(mode, page));
   }
 
   void clear() {
     _cache.clear();
-    _bakedCache.clear();
+    _skipTrimWhileFullMushafInRam = false;
   }
 
   /// يمسح الصفحات المخزنة لوضع معيّن (مثلاً 'qpc1' لتحميل الصفحات من جديد مع ayahSegments).
@@ -57,36 +79,11 @@ class PageCache {
     for (final k in keys) {
       _cache.remove(k);
     }
-    final bakedKeys =
-        _bakedCache.keys.where((k) => k.startsWith('${mode}_baked_')).toList();
-    for (final k in bakedKeys) {
-      _bakedCache.remove(k);
-    }
-  }
-
-  /// يبقي فقط الصفحات في النافذة [centerPage-before, centerPage+after].
-  /// معطّل عند استخدام التحميل التدريجي والتخزين الدائم — نحتفظ بكل الصفحات المحملة.
-  void pruneToWindow(int centerPage, {int? before, int? after}) {
-    // لا نمسح الصفحات — التحميل التدريجي والتخزين الدائم يحتفظ بكل ما تم تحميله
+    _skipTrimWhileFullMushafInRam = false;
   }
 
   /// عدد الصفحات المحملة لوضع معيّن (qpc1 أو qpc4).
   int getPageCountForMode(String mode) {
-    final rawPages = _cache.keys
-        .where((k) => k.startsWith('${mode}_'))
-        .map(_pageFromKey)
-        .whereType<int>()
-        .toSet();
-    final bakedPages = _bakedCache.keys
-        .where((k) => k.startsWith('${mode}_baked_'))
-        .map(_pageFromKey)
-        .whereType<int>()
-        .toSet();
-    return rawPages.union(bakedPages).length;
-  }
-
-  /// عدد الصفحات الخام فقط لوضع معيّن.
-  int getRawPageCountForMode(String mode) {
     return _cache.keys
         .where((k) => k.startsWith('${mode}_'))
         .map(_pageFromKey)
@@ -95,47 +92,20 @@ class PageCache {
         .length;
   }
 
-  /// عدد الصفحات المحسوبة فقط لوضع معيّن.
-  int getBakedPageCountForMode(String mode) {
-    return _bakedCache.keys
-        .where((k) => k.startsWith('${mode}_baked_'))
-        .map(_pageFromKey)
-        .whereType<int>()
-        .toSet()
-        .length;
-  }
-
-  /// عدد الصفحات الفريدة عبر جميع الأوضاع (qpc1/qpc4/raw/baked) حسب رقم الصفحة فقط.
-  int get totalUniquePageCount {
-    final pages = <int>{};
-    pages.addAll(_cache.keys.map(_pageFromKey).whereType<int>());
-    pages.addAll(_bakedCache.keys.map(_pageFromKey).whereType<int>());
-    return pages.length;
-  }
-
   /// إجمالي عدد الصفحات المحملة في الذاكرة.
-  int get totalCachedPageCount => _cache.length + _bakedCache.length;
+  int get totalCachedPageCount => _cache.length;
 
   /// تقدير تقريبي لحجم البيانات المحملة (بالبايت).
   int get estimatedSizeBytes {
     int total = 0;
     for (final lines in _cache.values) {
       for (final line in lines) {
-        total += line.lineText.length * 4; // تقريباً 4 بايت لكل حرف
+        total += line.lineText.length * 4;
         if (line.ayahSegments != null) {
           for (final s in line.ayahSegments!) {
             total += s.text.length * 4;
           }
         }
-      }
-    }
-    for (final baked in _bakedCache.values) {
-      for (final line in baked.pageLines) {
-        total += line.lineText.length * 4;
-      }
-      total += baked.lineHeights15.length * 8; // 8 bytes per double
-      if (baked.mapping != null) {
-        total += baked.mapping!.length * 16; // approx per entry
       }
     }
     return total;

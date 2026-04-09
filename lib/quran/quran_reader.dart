@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' show min;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -13,23 +15,58 @@ import 'package:quran_app/quran/renderers/qpc_v4_black_renderer.dart';
 import 'package:quran_app/quran/qpc_v1_loader.dart'
     show loadQpcV1PageForDisplay, tryGetQpcV1FromCache;
 import 'package:quran_app/quran/compact_line_spacing_scope.dart';
+import 'package:quran_app/quran/mushaf_page_layout.dart';
+import 'package:quran_app/quran/mushaf_ayah_highlight.dart';
 import 'package:quran_app/quran/mushaf_stable_viewport.dart';
+import 'package:quran_app/quran/cache_warmer.dart';
 import 'package:quran_app/audio/ayah_audio_player.dart';
 import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
     show
         AyahHighlightStore,
         DelayedLongPressDetector,
         QpcV4PageView,
-        QpcV4Renderer,
         getAyahRangesForPage,
         getAyahWordRangeForPage,
         getJustifiedLineStyle,
-        kQpcPageMarginFraction,
-        kQpcPageMarginLeftFraction,
+        kQpcAyahLineHeightTight,
+        kQpcAyahLinePadTight,
+        kQpcPageNumberRowHeight,
+        kQpcPageNumberVerticalNudge,
+        kQpcPageNumberVisualBoost,
+        kQpcRaqumSvgScale,
+        kQpcShortWideAspectThreshold,
         onQpcPageLongPress,
         preloadNearbyPages;
 
 enum QpcMushafMode { qpc1, qpc4, qpc4Black }
+
+/// تحميل مسبق لـ QPC1: تقليص كاش الرام (صفحتان قبل وبعد) ثم تعبئته من القرص + خطوط مجاورة.
+void preloadNearbyQpc1Pages(int currentPage) {
+  const totalPages = 604;
+  const before = PageCache.cacheWindowBefore;
+  const after = PageCache.cacheWindowAfter;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    SchedulerBinding.instance.scheduleTask<void>(
+      () async {
+        PageCache.instance.trimRamToNearbyPages(currentPage);
+        await PagePersistentCache.instance.hydrateRamWindow(
+          mode: 'qpc1',
+          centerPage: currentPage,
+          before: before,
+          after: after,
+          totalPages: totalPages,
+        );
+        for (var p = currentPage - before; p <= currentPage + after; p++) {
+          if (p < 1 || p > totalPages) continue;
+          await loadQcfFont(p);
+          await Future<void>.delayed(const Duration(milliseconds: 8));
+        }
+      },
+      Priority.idle,
+      debugLabel: 'preloadNearbyQpc1',
+    );
+  });
+}
 
 /// محاذاة FittedBox لأسطر V1: وسط أفقيًا حتى لا يتراكم الفراغ على يسار السطر عندما يكون النص أضيق من عرض السطر بعد التحجيم.
 const Alignment _kV1FittedLineAlignment = Alignment.center;
@@ -166,7 +203,10 @@ Widget buildQpcPageContent(
         future: loadQpcV1PageForDisplay(page),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ColoredBox(color: Colors.transparent);
+            return ColoredBox(
+              color: MushafPaperBackgroundScope.of(context),
+              child: const SizedBox.expand(),
+            );
           }
           if (snapshot.hasError) {
             return Center(
@@ -193,7 +233,10 @@ Widget buildQpcPageContent(
       );
     }
   }
-  return MushafStableViewport(child: inner);
+  return ColoredBox(
+    color: MushafPaperBackgroundScope.of(context),
+    child: MushafStableViewport(child: inner),
+  );
 }
 
 /// عرض صفحة QPC V1 من الأسطر المحملة (يُستخدم من buildQpcPageContent).
@@ -342,6 +385,7 @@ class QuranReader extends StatefulWidget {
 }
 
 class _QuranReaderState extends State<QuranReader> {
+  static const String _v1CacheMode = 'qpc1';
   static const String _surahNameFontFamily = 'SurahNameV4';
   static const double _basmallahRaiseDy = -2.0;
   static const String _basmallahFontFamily = 'KFGQPCHAFSUthmanicScript';
@@ -378,10 +422,13 @@ class _QuranReaderState extends State<QuranReader> {
     }
     _initDb();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted &&
-          (_effectiveMode == QpcMushafMode.qpc4 ||
-              _effectiveMode == QpcMushafMode.qpc4Black)) {
-        preloadNearbyPages(_currentPageIndex + 1);
+      if (!mounted) return;
+      final pageNum = _currentPageIndex + 1;
+      if (_effectiveMode == QpcMushafMode.qpc4 ||
+          _effectiveMode == QpcMushafMode.qpc4Black) {
+        preloadNearbyPages(pageNum);
+      } else if (_effectiveMode == QpcMushafMode.qpc1) {
+        _preloadV1Pages(pageNum);
       }
     });
   }
@@ -402,6 +449,8 @@ class _QuranReaderState extends State<QuranReader> {
         });
         widget.onReady?.call();
       }
+      // تسخين مسبق لكامل المصحف في الخلفية — مرة واحدة فقط عند أول تثبيت
+      Future(() => CacheWarmer.instance.warmAll());
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -412,226 +461,7 @@ class _QuranReaderState extends State<QuranReader> {
     }
   }
 
-  static const String _v1CacheMode = 'qpc1';
-
-  static const Map<int, String> _surahNames = {
-    1: 'سورة الفاتحة',
-    2: 'سورة البقرة',
-    3: 'سورة آل عمران',
-    4: 'سورة النساء',
-    5: 'سورة المائدة',
-    6: 'سورة الأنعام',
-    7: 'سورة الأعراف',
-    8: 'سورة الأنفال',
-    9: 'سورة التوبة',
-    10: 'سورة يونس',
-    11: 'سورة هود',
-    12: 'سورة يوسف',
-    13: 'سورة الرعد',
-    14: 'سورة إبراهيم',
-    15: 'سورة الحجر',
-    16: 'سورة النحل',
-    17: 'سورة الإسراء',
-    18: 'سورة الكهف',
-    19: 'سورة مريم',
-    20: 'سورة طه',
-    21: 'سورة الأنبياء',
-    22: 'سورة الحج',
-    23: 'سورة المؤمنون',
-    24: 'سورة النور',
-    25: 'سورة الفرقان',
-    26: 'سورة الشعراء',
-    27: 'سورة النمل',
-    28: 'سورة القصص',
-    29: 'سورة العنكبوت',
-    30: 'سورة الروم',
-    31: 'سورة لقمان',
-    32: 'سورة السجدة',
-    33: 'سورة الأحزاب',
-    34: 'سورة سبأ',
-    35: 'سورة فاطر',
-    36: 'سورة يس',
-    37: 'سورة الصافات',
-    38: 'سورة ص',
-    39: 'سورة الزمر',
-    40: 'سورة غافر',
-    41: 'سورة فصلت',
-    42: 'سورة الشورى',
-    43: 'سورة الزخرف',
-    44: 'سورة الدخان',
-    45: 'سورة الجاثية',
-    46: 'سورة الأحقاف',
-    47: 'سورة محمد',
-    48: 'سورة الفتح',
-    49: 'سورة الحجرات',
-    50: 'سورة ق',
-    51: 'سورة الذاريات',
-    52: 'سورة الطور',
-    53: 'سورة النجم',
-    54: 'سورة القمر',
-    55: 'سورة الرحمن',
-    56: 'سورة الواقعة',
-    57: 'سورة الحديد',
-    58: 'سورة المجادلة',
-    59: 'سورة الحشر',
-    60: 'سورة الممتحنة',
-    61: 'سورة الصف',
-    62: 'سورة الجمعة',
-    63: 'سورة المنافقون',
-    64: 'سورة التغابن',
-    65: 'سورة الطلاق',
-    66: 'سورة التحريم',
-    67: 'سورة الملك',
-    68: 'سورة القلم',
-    69: 'سورة الحاقة',
-    70: 'سورة المعارج',
-    71: 'سورة نوح',
-    72: 'سورة الجن',
-    73: 'سورة المزمل',
-    74: 'سورة المدثر',
-    75: 'سورة القيامة',
-    76: 'سورة الإنسان',
-    77: 'سورة المرسلات',
-    78: 'سورة النبأ',
-    79: 'سورة النازعات',
-    80: 'سورة عبس',
-    81: 'سورة التكوير',
-    82: 'سورة الانفطار',
-    83: 'سورة المطففين',
-    84: 'سورة الانشقاق',
-    85: 'سورة البروج',
-    86: 'سورة الطارق',
-    87: 'سورة الأعلى',
-    88: 'سورة الغاشية',
-    89: 'سورة الفجر',
-    90: 'سورة البلد',
-    91: 'سورة الشمس',
-    92: 'سورة الليل',
-    93: 'سورة الضحى',
-    94: 'سورة الشرح',
-    95: 'سورة التين',
-    96: 'سورة العلق',
-    97: 'سورة القدر',
-    98: 'سورة البينة',
-    99: 'سورة الزلزلة',
-    100: 'سورة العاديات',
-    101: 'سورة القارعة',
-    102: 'سورة التكاثر',
-    103: 'سورة العصر',
-    104: 'سورة الهمزة',
-    105: 'سورة الفيل',
-    106: 'سورة قريش',
-    107: 'سورة الماعون',
-    108: 'سورة الكوثر',
-    109: 'سورة الكافرون',
-    110: 'سورة النصر',
-    111: 'سورة المسد',
-    112: 'سورة الإخلاص',
-    113: 'سورة الفلق',
-    114: 'سورة الناس',
-  };
-
-  Future<List<MushafPageLine>> _loadPage(int page) async {
-    if (_effectiveMode == QpcMushafMode.qpc4) {
-      return QpcV4Renderer.instance.loadPage(page);
-    }
-
-    await loadQcfFont(page);
-    final cached = PageCache.instance.get(_v1CacheMode, page);
-    if (cached != null) {
-      final hasSegments = cached.every((l) =>
-          l.lineType != 'ayah' ||
-          l.rangeStart == null ||
-          (l.ayahSegments != null && l.ayahSegments!.isNotEmpty));
-      if (hasSegments) return cached;
-    }
-
-    final persisted =
-        await PagePersistentCache.instance.get(_v1CacheMode, page);
-    if (persisted != null && persisted.isNotEmpty) {
-      final hasSegments = persisted.every((l) =>
-          l.lineType != 'ayah' ||
-          l.rangeStart == null ||
-          (l.ayahSegments != null && l.ayahSegments!.isNotEmpty));
-      if (hasSegments) {
-        PageCache.instance.put(_v1CacheMode, page, persisted);
-        return persisted;
-      }
-    }
-
-    final layout = await _db.getLayoutForPage(page);
-    final lines = <MushafPageLine>[];
-    final fontFamily = 'QCF_P${page.toString().padLeft(3, '0')}';
-
-    for (final row in layout) {
-      final isCentered = row['is_centered'] as bool? ?? false;
-      final rangeStart = row['range_start'] as int? ?? 0;
-      final rangeEnd = row['range_end'] as int? ?? 0;
-      final rowType = (row['type']?.toString().trim().toLowerCase() ?? '');
-
-      if (rowType == 'surah_name') {
-        final surahTitle = _surahNames[rangeStart] ?? '';
-        if (surahTitle.isNotEmpty) {
-          lines.add(MushafPageLine(
-            lineText: surahTitle,
-            isCentered: true,
-            fontFamily: fontFamily,
-            lineType: 'surah_name',
-            pageNumber: page,
-          ));
-        }
-        continue;
-      }
-
-      if (rowType == 'basmallah') {
-        const basmallah = 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ';
-        lines.add(MushafPageLine(
-          lineText: basmallah,
-          isCentered: true,
-          fontFamily: 'QuranUthmani',
-          lineType: 'basmallah',
-          pageNumber: page,
-        ));
-        continue;
-      }
-
-      if (rangeStart <= 0 || rangeEnd < rangeStart) continue;
-
-      final qpcV1List = await _db.getQpcV1InRange(rangeStart, rangeEnd);
-      final lineText = qpcV1List.join('');
-
-      if (lineText.isEmpty) continue;
-
-      final ayahSegments = [
-        for (final word in qpcV1List) (text: word, isMarker: false),
-      ];
-      lines.add(MushafPageLine(
-        lineText: lineText,
-        isCentered: isCentered,
-        fontFamily: fontFamily,
-        lineType: 'ayah',
-        rangeStart: rangeStart,
-        rangeEnd: rangeEnd,
-        ayahSegments: ayahSegments,
-      ));
-    }
-
-    PageCache.instance.put(_v1CacheMode, page, lines);
-    PagePersistentCache.instance.put(_v1CacheMode, page, lines);
-    return lines;
-  }
-
-  /// نفس آلية QPC4: تحميل مسبق للنافذة فقط (2 قبل، 2 بعد الحالية).
-  void _preloadV1Pages(int currentPage) {
-    const totalPages = 604;
-    final before = PageCache.cacheWindowBefore;
-    final after = PageCache.cacheWindowAfter;
-    for (int p = currentPage - before; p <= currentPage + after; p++) {
-      if (p < 1 || p > totalPages) continue;
-      if (PageCache.instance.has(_v1CacheMode, p)) continue;
-      Future(() => _loadPage(p));
-    }
-  }
+  void _preloadV1Pages(int currentPage) => preloadNearbyQpc1Pages(currentPage);
 
   void _goBackToMain() {
     if (!mounted) return;
@@ -685,7 +515,7 @@ class _QuranReaderState extends State<QuranReader> {
     );
   }
 
-  static const double _linePaddingBottom = 0.5;
+  static const double _linePaddingBottom = 0.32;
 
   static const String _arabicDigits = '٠١٢٣٤٥٦٧٨٩';
   static String _toArabicDigits(int value) {
@@ -694,35 +524,60 @@ class _QuranReaderState extends State<QuranReader> {
   }
 
   /// صف رقم الصفحة داخل صفحة QPC V1 (نفس سلوك الشريط العلوي — يُسحَب مع الصفحة).
+  /// إزاحة ~4% من عرض الصف نحو المركز: فردي أقرب لليسار، زوجي أقرب لليمين.
   Widget _buildV1PageNumberRow(int page) {
-    return SizedBox(
-      height: 40,
-      child: Align(
-        alignment: page.isOdd ? Alignment.centerRight : Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: SizedBox(
-            width: 56.25,
-            height: 28.125,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SvgPicture.asset(
-                  'assets/icon/raqum_alsafha.svg',
-                  fit: BoxFit.contain,
-                ),
-                Text(
-                  _toArabicDigits(page),
-                  style: TextStyle(
-                    fontSize: 18,
-                    color:
-                        _useWhiteTextOnDarkMushaf ? Colors.white : Colors.black,
-                    fontWeight: FontWeight.w600,
+    return Transform.translate(
+      offset: const Offset(0, kQpcPageNumberVerticalNudge),
+      child: SizedBox(
+        height: kQpcPageNumberRowHeight,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final shift = constraints.maxWidth * 0.04;
+            final pad = page.isOdd
+                ? EdgeInsets.fromLTRB(16, 0, 16 + shift, 0)
+                : EdgeInsets.fromLTRB(16 + shift, 0, 16, 0);
+            return Align(
+              alignment:
+                  page.isOdd ? Alignment.centerRight : Alignment.centerLeft,
+              child: Padding(
+                padding: pad,
+                child: SizedBox(
+                  height: kQpcPageNumberRowHeight,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: SizedBox(
+                      width: 56.25 / kQpcPageNumberVisualBoost,
+                      height: 28.125 / kQpcPageNumberVisualBoost,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        alignment: Alignment.center,
+                        children: [
+                          Transform.scale(
+                            scale: kQpcRaqumSvgScale,
+                            alignment: Alignment.center,
+                            child: SvgPicture.asset(
+                              'assets/icon/raqum_alsafha.svg',
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                          Text(
+                            _toArabicDigits(page),
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: _useWhiteTextOnDarkMushaf
+                                  ? Colors.white
+                                  : Colors.black,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -730,22 +585,25 @@ class _QuranReaderState extends State<QuranReader> {
 
   /// نفس حجم وخطوة السطر في V4 (تم تكبيره إلى 26 بدلاً من 23).
   static const double _fontSize = 26;
-  static const double _lineHeight = 1.52;
+  static const double _lineHeight = 1.25;
 
   static TextStyle _lineStyle(
     String fontFamily, {
     double? fontSize,
     bool useWhiteTextOnDark = false,
+    double? height,
   }) =>
       TextStyle(
         fontFamily: fontFamily,
         fontSize: fontSize ?? _fontSize,
-        height: _lineHeight,
+        height: height ?? _lineHeight,
         color: useWhiteTextOnDark ? Colors.white : null,
       );
 
   static TextStyle _v1LineStyleFromLine(MushafPageLine line,
-      {double fontSizeScale = 1.0, bool useWhiteTextOnDark = false}) {
+      {double fontSizeScale = 1.0,
+      bool useWhiteTextOnDark = false,
+      double? ayahLineHeight}) {
     if (line.lineType == 'surah_name') {
       return GoogleFonts.arefRuqaaInk(
         fontSize: 17 * fontSizeScale,
@@ -757,7 +615,7 @@ class _QuranReaderState extends State<QuranReader> {
     if (line.lineType == 'basmallah') {
       return TextStyle(
         fontFamily: _basmallahFontFamily,
-        fontSize: 22 * fontSizeScale,
+        fontSize: 18 * fontSizeScale,
         height: 1.15,
         fontWeight: FontWeight.w600,
         color: useWhiteTextOnDark ? Colors.white : Colors.black,
@@ -767,6 +625,85 @@ class _QuranReaderState extends State<QuranReader> {
       line.fontFamily,
       fontSize: _fontSize * fontSizeScale,
       useWhiteTextOnDark: useWhiteTextOnDark,
+      height: ayahLineHeight,
+    );
+  }
+
+  /// تبرير بتوزيع المسافات — لا نستخدم الحساب الهندسي البديل لمحاذاة يمين RTL.
+  static bool _v1LineUsesWordSpacingJustification(
+    MushafPageLine line,
+    TextStyle base,
+    TextStyle applied,
+  ) {
+    if (line.isCentered) return false;
+    return (applied.wordSpacing ?? 0) != (base.wordSpacing ?? 0);
+  }
+
+  /// بعض حالات RTL في QPC1 تُرجع إحداثيات قياس على عرض فعلي أصغر من [lineWidth]
+  /// (خاصة عند overflow.visible). نعيدها إلى مرجع السطر الكامل حتى يتطابق
+  /// موضع التحديد/التضليل مع الرسم.
+  static double _v1ResolvedLineLeftAdjustment({
+    required MushafPageLine line,
+    required TextPainter painter,
+    required double lineWidth,
+  }) {
+    if (line.isCentered) return 0.0;
+    final extra = lineWidth - painter.width;
+    if (!extra.isFinite || extra <= 0.01) return 0.0;
+    return extra;
+  }
+
+  /// نص سطر آية QPC1 — يجب أن يبقى متماثلًا مع [mushafLaidOutRtlLinePainterV1Highlight].
+  static Widget _v1AyahLineTextStatic(
+    String lineText,
+    TextStyle lineStyle, {
+    required bool lineCentered,
+  }) {
+    return Text(
+      lineText,
+      textDirection: TextDirection.rtl,
+      textAlign: lineCentered ? TextAlign.center : TextAlign.right,
+      softWrap: false,
+      maxLines: 1,
+      overflow: TextOverflow.visible,
+      textScaler: TextScaler.noScaling,
+      textWidthBasis: TextWidthBasis.parent,
+      style: lineStyle,
+    );
+  }
+
+  /// غلاف بصري موحّد لسطر الآية (Stack بنفس عرض/ارتفاع التخطيط) حتى يطابق الرسم حساب التضليل.
+  static Widget _v1AyahLineVisualShellStatic({
+    required MushafPageLine line,
+    required double lineWidth,
+    required double lineHeight,
+    required TextStyle lineStyle,
+    required List<Widget> overlayWidgets,
+    required EdgeInsets padding,
+  }) {
+    final alignment =
+        line.isCentered ? Alignment.center : Alignment.centerRight;
+    return Padding(
+      padding: padding,
+      child: Align(
+        alignment: alignment,
+        child: SizedBox(
+          width: double.infinity,
+          child: Align(
+            alignment: alignment,
+            child: mushafHighlightLineStackFixed(
+              lineWidth: lineWidth,
+              lineHeight: lineHeight,
+              lineText: _v1AyahLineTextStatic(
+                line.lineText,
+                lineStyle,
+                lineCentered: line.isCentered,
+              ),
+              overlayWidgets: overlayWidgets,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -780,12 +717,8 @@ class _QuranReaderState extends State<QuranReader> {
         line,
         useWhiteTextOnDark: useWhiteTextOnDark,
       );
-      final painter = TextPainter(
-        text: TextSpan(text: line.lineText, style: style),
-        textDirection: TextDirection.rtl,
-        maxLines: 1,
-      )..layout(maxWidth: double.infinity);
-      if (painter.width > maxLineWidth) maxLineWidth = painter.width;
+      final w = mushafMeasureLineWidth(line.lineText, style);
+      if (w > maxLineWidth) maxLineWidth = w;
     }
     return maxLineWidth;
   }
@@ -805,15 +738,6 @@ class _QuranReaderState extends State<QuranReader> {
       }
     }
     return total;
-  }
-
-  static double _measureV1LineWidth(String text, TextStyle style) {
-    final p = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.rtl,
-      maxLines: 1,
-    )..layout(maxWidth: double.infinity);
-    return p.width;
   }
 
   /// نسخة ثابتة لبناء صفحة V1 من الأسطر (للاستخدام من buildQpcPageContent).
@@ -854,10 +778,7 @@ class _QuranReaderState extends State<QuranReader> {
             context,
             constraints,
             page,
-            contentW,
-            contentH,
             null,
-            lineHeights,
             pageLines,
             null,
             null,
@@ -882,10 +803,7 @@ class _QuranReaderState extends State<QuranReader> {
               ctx,
               constraints,
               page,
-              contentW,
-              contentH,
               mapSnap.data,
-              lineHeights,
               pageLines,
               sel,
               persistentSel,
@@ -900,14 +818,47 @@ class _QuranReaderState extends State<QuranReader> {
     );
   }
 
+  /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
+  static double _computeV1UniformAyahScale(
+    List<MushafPageLine> displayLines,
+    double layoutW,
+    double slotHeight,
+    double fontSizeScale,
+    double? ayahLineHeight,
+    bool useWhiteTextOnDark,
+  ) {
+    var minScale = 1.0;
+    for (final line in displayLines) {
+      if (line.lineType != 'ayah') continue;
+      final base = _v1LineStyleFromLine(
+        line,
+        fontSizeScale: fontSizeScale,
+        useWhiteTextOnDark: useWhiteTextOnDark,
+        ayahLineHeight: ayahLineHeight,
+      );
+      final style =
+          line.isCentered ? base : getJustifiedLineStyle(line, base, layoutW);
+      final p = TextPainter(
+        text: TextSpan(text: line.lineText, style: style),
+        textDirection: TextDirection.rtl,
+        maxLines: 1,
+      )..layout(maxWidth: double.infinity);
+      final w = p.width;
+      final h = p.height;
+      if (w <= 0 || h <= 0) continue;
+      final sw = layoutW / w;
+      final sh = slotHeight / h;
+      final s = min(1.0, min(sw, sh));
+      if (s < minScale) minScale = s;
+    }
+    return minScale;
+  }
+
   static Widget _buildV1PageContentStatic(
       BuildContext context,
       BoxConstraints constraints,
       int page,
-      double contentW,
-      double contentH,
       Map<int, (int sura, int ayah)>? mapping,
-      List<double> lineHeights,
       List<MushafPageLine> pageLines,
       List<(int lineIndex, int startChar, int endChar)>? selection,
       List<(int lineIndex, int startChar, int endChar, Color color)>?
@@ -918,37 +869,89 @@ class _QuranReaderState extends State<QuranReader> {
       void Function()? onClearSelection,
       {bool useWhiteTextOnDark = false}) {
     final isCompact = CompactLineSpacingScope.isCompact(context);
-    const compactMarginFraction = 0.02;
     final availableWidth = constraints.maxWidth;
-    final marginFraction =
-        isCompact ? compactMarginFraction : kQpcPageMarginFraction;
-    final leftMargin = availableWidth *
-        (isCompact ? compactMarginFraction : kQpcPageMarginLeftFraction);
-    final rightMargin = availableWidth * marginFraction;
-    final availableW = availableWidth - leftMargin - rightMargin;
+    final omitVertical = SeamlessLongScrollScope.isActive(context);
+    final metrics = computeMushafInnerLayoutMetrics(
+      maxWidth: availableWidth,
+      maxHeight: constraints.maxHeight,
+      isCompact: isCompact,
+      omitVerticalMargins: omitVertical,
+    );
+    final aspect = constraints.maxHeight > 0
+        ? constraints.maxWidth / constraints.maxHeight
+        : 1.0;
+    final useTightLateral =
+        !isCompact && aspect >= kQpcShortWideAspectThreshold;
+    final availableW = metrics.innerWidth;
     final fontScale = isCompact ? getCompactFontScaleFactor(context) : 1.0;
-    final linePad = isCompact ? 0.2 : _linePaddingBottom;
-    var scaledW = availableW;
-    var scaleFinal = contentW > 0 ? availableW / contentW : 1.0;
-    if (!isCompact) {
-      scaleFinal = scaleFinal.clamp(0.5, 3.0);
-      scaledW = contentW * scaleFinal;
-      if ((page == 1 || page == 2) && contentW > 0 && scaledW < availableW) {
-        scaledW = availableW;
-        scaleFinal = availableW / contentW;
-      }
-      if (page == 3 && contentW > 0 && scaledW < availableW) {
-        scaledW = availableW;
-        scaleFinal = availableW / contentW;
+    var linePad = isCompact ? 0.2 : _linePaddingBottom;
+    var ayahLineHeight = _lineHeight;
+    if (useTightLateral) {
+      final slotProbe = metrics.innerHeight / kMushafLineSlotCount;
+      const maxFontScale = 1.12;
+      final minSlotNeeded = _fontSize * maxFontScale * kQpcAyahLineHeightTight +
+          kQpcAyahLinePadTight;
+      if (slotProbe >= minSlotNeeded + 0.5) {
+        ayahLineHeight = kQpcAyahLineHeightTight;
+        linePad = kQpcAyahLinePadTight;
       }
     }
-    final fullH = constraints.maxHeight;
-    final slotCount = 15;
-    final slotHeight = fullH / slotCount;
-    final displayLines =
-        pageLines.length >= 15 ? pageLines.sublist(0, 15) : pageLines;
+    // عرض عمود النص = المنطقة الداخلية (هامشان 2%).
+    final scaledW = availableW;
+    final displayLines = pageLines.length >= kMushafLineSlotCount
+        ? pageLines.sublist(0, kMushafLineSlotCount)
+        : pageLines;
+    var baseFontSizeScale = (page == 1 || page == 2)
+        ? 1.12
+        : (page == 3)
+            ? 1.08
+            : 1.0;
+    if (isCompact) baseFontSizeScale *= fontScale;
+    MushafPageLine v1ProbeLine = displayLines.first;
+    for (final l in displayLines) {
+      if (l.lineType == 'ayah') {
+        v1ProbeLine = l;
+        break;
+      }
+    }
+    final slotNatural = metrics.slotHeight;
+    var squeezedBaseFontScale = baseFontSizeScale;
+    var bodyLinePad = linePad;
+    late double minSlotH;
+    late double layoutHeight;
+    late double slotHeight;
+    for (var squeezeIter = 0; squeezeIter < 8; squeezeIter++) {
+      final v1ProbeStyle = _v1LineStyleFromLine(
+        v1ProbeLine,
+        fontSizeScale: squeezedBaseFontScale,
+        useWhiteTextOnDark: useWhiteTextOnDark,
+        ayahLineHeight: ayahLineHeight,
+      );
+      minSlotH = mushafMinSlotHeightForAyahStyle(
+        ayahStyle: v1ProbeStyle,
+        linePaddingBottom: bodyLinePad,
+      );
+      final blockFit = slotNatural + 0.01 < minSlotH;
+      layoutHeight =
+          blockFit ? kMushafLineSlotCount * minSlotH : metrics.innerHeight;
+      slotHeight = blockFit ? minSlotH : slotNatural;
+      if (!blockFit || layoutHeight <= metrics.innerHeight + 0.5) {
+        break;
+      }
+      final squeeze = metrics.innerHeight / layoutHeight;
+      squeezedBaseFontScale *= squeeze;
+      bodyLinePad *= squeeze;
+    }
+    final uniformAyahScale = _computeV1UniformAyahScale(
+      displayLines,
+      scaledW,
+      slotHeight,
+      squeezedBaseFontScale,
+      ayahLineHeight,
+      useWhiteTextOnDark,
+    );
     final slots = <Widget>[];
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < kMushafLineSlotCount; i++) {
       Widget lineChild = const SizedBox.shrink();
       final srcIndex = (page == 1 || page == 2) ? i - 3 : i;
       if (srcIndex >= 0 && srcIndex < displayLines.length) {
@@ -962,12 +965,7 @@ class _QuranReaderState extends State<QuranReader> {
             }
           }
         }
-        var fontSizeScale = (page == 1 || page == 2)
-            ? 1.12
-            : (page == 3)
-                ? 1.08
-                : 1.0;
-        if (isCompact) fontSizeScale *= fontScale;
+        final fontSizeScale = squeezedBaseFontScale;
         (int, int, int)? lineWordSelection;
         if (wordSelection != null && wordSelection.$1 == srcIndex) {
           lineWordSelection = wordSelection;
@@ -986,11 +984,16 @@ class _QuranReaderState extends State<QuranReader> {
           lineChild = _QuranReaderState._buildV1LineWithAyahOverlayStatic(
               line, scaledW, lineSelection.$2, lineSelection.$3,
               fontSizeScale: fontSizeScale,
-              linePad: linePad,
+              uniformAyahScale: uniformAyahScale,
+              linePad: bodyLinePad,
               useWhiteTextOnDark: useWhiteTextOnDark,
+              ayahLineHeight: ayahLineHeight,
               wordRange: lineWordSelection != null
                   ? (lineWordSelection.$2, lineWordSelection.$3)
-                  : null);
+                  : null,
+              persistentAlso: linePersistentSelections.isEmpty
+                  ? null
+                  : linePersistentSelections);
         } else if (linePersistentSelections.isNotEmpty &&
             line.lineType == 'ayah') {
           lineChild =
@@ -999,8 +1002,10 @@ class _QuranReaderState extends State<QuranReader> {
             scaledW,
             linePersistentSelections,
             fontSizeScale: fontSizeScale,
-            linePad: linePad,
+            uniformAyahScale: uniformAyahScale,
+            linePad: bodyLinePad,
             useWhiteTextOnDark: useWhiteTextOnDark,
+            ayahLineHeight: ayahLineHeight,
             wordRange: lineWordSelection != null
                 ? (lineWordSelection.$2, lineWordSelection.$3)
                 : null,
@@ -1012,20 +1017,23 @@ class _QuranReaderState extends State<QuranReader> {
           lineChild = _QuranReaderState._buildV1LineWithWordOverlayOnlyStatic(
               line, scaledW, lineWordSelection.$2, lineWordSelection.$3,
               fontSizeScale: fontSizeScale,
-              linePad: linePad,
-              useWhiteTextOnDark: useWhiteTextOnDark);
+              uniformAyahScale: uniformAyahScale,
+              linePad: bodyLinePad,
+              useWhiteTextOnDark: useWhiteTextOnDark,
+              ayahLineHeight: ayahLineHeight);
         } else if (line.lineType == 'surah_name') {
-          lineChild = _QuranReaderState._buildSurahNameLineStatic(
-              line, contentW,
+          lineChild = _QuranReaderState._buildSurahNameLineStatic(line, scaledW,
               fontSizeScale: fontSizeScale,
-              linePad: linePad,
+              linePad: bodyLinePad,
               useWhiteTextOnDark: useWhiteTextOnDark);
         } else {
           lineChild = _QuranReaderState._buildLineStatic(line,
               contentW: scaledW,
               fontSizeScale: fontSizeScale,
-              linePad: linePad,
-              useWhiteTextOnDark: useWhiteTextOnDark);
+              uniformAyahScale: uniformAyahScale,
+              linePad: bodyLinePad,
+              useWhiteTextOnDark: useWhiteTextOnDark,
+              ayahLineHeight: ayahLineHeight);
         }
       }
       slots.add(SizedBox(
@@ -1042,7 +1050,8 @@ class _QuranReaderState extends State<QuranReader> {
       children: slots,
     );
     if (mapping != null) {
-      final lineHeights15 = List<double>.filled(15, slotHeight);
+      final lineHeights15 =
+          List<double>.filled(kMushafLineSlotCount, slotHeight);
       content = DelayedLongPressDetector(
         duration: const Duration(milliseconds: 400),
         onTrigger: (Offset pos) {
@@ -1053,35 +1062,78 @@ class _QuranReaderState extends State<QuranReader> {
             context,
             adjustedPos,
             scaledW,
-            fullH,
+            layoutHeight,
             lineHeights15,
             displayLines,
             const TextStyle(),
             mapping,
             (line, _) => _v1LineStyleFromLine(
               line,
+              fontSizeScale: squeezedBaseFontScale * uniformAyahScale,
               useWhiteTextOnDark: useWhiteTextOnDark,
+              ayahLineHeight: ayahLineHeight,
             ),
             onSelectLine: onSelectLine,
             onClearSelection: onClearSelection,
-            lineTextHorizontallyCentered: true,
+            lineTextHorizontallyCentered: false,
+            hitTestLayoutFullColumnWidth: true,
+            uniformAyahScale: 1.0,
+            hitTestTextScaler: TextScaler.noScaling,
+            lineHitTestYTolerance: 3.0,
           );
         },
         child: content,
       );
     }
-    Widget result = SizedBox(
-      width: scaledW,
-      height: fullH,
-      child: content,
-    );
-    return Padding(
-      padding: EdgeInsets.only(left: leftMargin, right: rightMargin),
+    Widget buildV1ColumnBox() {
+      return SizedBox(
+        width: scaledW,
+        height: layoutHeight,
+        child: content,
+      );
+    }
+
+    final columnAlign = omitVertical ? Alignment.topCenter : Alignment.center;
+    final innerSized = SizedBox(
+      width: metrics.innerWidth,
+      height: metrics.innerHeight,
       child: Align(
-        // توسيط الكتلة عندما يكون عرض المحتوى أضيق من المساحة بين الهامشين
-        // حتى لا يتراكم الفراغ على جانب واحد فقط.
-        alignment: Alignment.center,
-        child: result,
+        alignment: columnAlign,
+        child: buildV1ColumnBox(),
+      ),
+    );
+
+    // نفس هيكل QPC4: ScrollView + minHeight حتى يتطابق عرض منطقة الهوامش مع V4
+    // (2% من عرض constraints الكامل). بدون ذلك قد يضيق عرض المحتوى فيُحسب
+    // الهامش من عرض أصغر فيبدو أقل من 2% من عرض الصفحة الظاهر.
+    final paddedBody = Padding(
+      padding: EdgeInsets.only(
+        left: metrics.leftMargin,
+        right: metrics.rightMargin,
+        top: metrics.topMargin,
+        bottom: metrics.bottomMargin,
+      ),
+      child: Align(
+        alignment: columnAlign,
+        child: RepaintBoundary(
+          child: ColoredBox(
+            color: MushafPaperBackgroundScope.of(context),
+            child: innerSized,
+          ),
+        ),
+      ),
+    );
+
+    return SizedBox(
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+      child: SingleChildScrollView(
+        primary: false,
+        physics: const NeverScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: paddedBody,
+        ),
       ),
     );
   }
@@ -1089,20 +1141,75 @@ class _QuranReaderState extends State<QuranReader> {
   static Widget _buildLineStatic(MushafPageLine line,
       {double? contentW,
       double fontSizeScale = 1.0,
+      double uniformAyahScale = 1.0,
       double? linePad,
-      bool useWhiteTextOnDark = false}) {
+      bool useWhiteTextOnDark = false,
+      double? ayahLineHeight}) {
     final pad = linePad ?? _linePaddingBottom;
     final alignment =
         line.isCentered ? Alignment.center : Alignment.centerRight;
+    final fs = line.lineType == 'ayah'
+        ? fontSizeScale * uniformAyahScale
+        : fontSizeScale;
     final baseStyle = _v1LineStyleFromLine(
       line,
-      fontSizeScale: fontSizeScale,
+      fontSizeScale: fs,
       useWhiteTextOnDark: useWhiteTextOnDark,
+      ayahLineHeight: ayahLineHeight,
     );
     final effectiveStyle =
         (contentW != null && line.lineType == 'ayah' && !line.isCentered)
             ? getJustifiedLineStyle(line, baseStyle, contentW)
             : baseStyle;
+    final inner = (line.lineType == 'basmallah')
+        ? Transform.translate(
+            offset: Offset(0, _QuranReaderState._basmallahRaiseDy * fs),
+            child: Text(
+              line.lineText,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.center,
+              softWrap: false,
+              maxLines: 1,
+              overflow: TextOverflow.visible,
+              style: effectiveStyle,
+            ),
+          )
+        : Text(
+            line.lineText,
+            textDirection: TextDirection.rtl,
+            textAlign: line.isCentered ? TextAlign.center : TextAlign.right,
+            softWrap: false,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            style: effectiveStyle,
+          );
+    // أسطر الآية: نفس هيكل [mushafHighlightLineStackFixed] المستخدم مع التضليل
+    // (عرض/ارتفاع ثابتان + Positioned.fill) حتى يتطابق [TextPainter.layout] مع [RenderParagraph].
+    if (line.lineType == 'ayah' && contentW != null) {
+      final layoutPainter = mushafLaidOutRtlLinePainterV1Highlight(
+        line.lineText,
+        effectiveStyle,
+        contentW,
+        lineCentered: line.isCentered,
+      );
+      return _v1AyahLineVisualShellStatic(
+        line: line,
+        lineWidth: contentW,
+        lineHeight: layoutPainter.height,
+        lineStyle: effectiveStyle,
+        overlayWidgets: const [],
+        padding: EdgeInsets.only(bottom: pad),
+      );
+    }
+    if (line.lineType == 'ayah') {
+      return Padding(
+        padding: EdgeInsets.only(bottom: pad),
+        child: Align(
+          alignment: alignment,
+          child: SizedBox(width: double.infinity, child: inner),
+        ),
+      );
+    }
     return Padding(
       padding: EdgeInsets.only(bottom: pad),
       child: Align(
@@ -1112,30 +1219,7 @@ class _QuranReaderState extends State<QuranReader> {
           child: FittedBox(
             fit: BoxFit.scaleDown,
             alignment: _kV1FittedLineAlignment,
-            child: (line.lineType == 'basmallah')
-                ? Transform.translate(
-                    offset: Offset(
-                        0, _QuranReaderState._basmallahRaiseDy * fontSizeScale),
-                    child: Text(
-                      line.lineText,
-                      textDirection: TextDirection.rtl,
-                      textAlign: TextAlign.center,
-                      softWrap: false,
-                      maxLines: 1,
-                      overflow: TextOverflow.visible,
-                      style: effectiveStyle,
-                    ),
-                  )
-                : Text(
-                    line.lineText,
-                    textDirection: TextDirection.rtl,
-                    textAlign:
-                        line.isCentered ? TextAlign.center : TextAlign.right,
-                    softWrap: false,
-                    maxLines: 1,
-                    overflow: TextOverflow.visible,
-                    style: effectiveStyle,
-                  ),
+            child: inner,
           ),
         ),
       ),
@@ -1164,7 +1248,7 @@ class _QuranReaderState extends State<QuranReader> {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                line.lineText,
+                mushafSurahTitleDisplayText(line.lineText),
                 textDirection: TextDirection.rtl,
                 style: _v1LineStyleFromLine(
                   line,
@@ -1186,39 +1270,58 @@ class _QuranReaderState extends State<QuranReader> {
         persistentSelections, {
     (int, int)? wordRange,
     double fontSizeScale = 1.0,
+    double uniformAyahScale = 1.0,
     double? linePad,
     bool useWhiteTextOnDark = false,
+    double? ayahLineHeight,
   }) {
     final pad = linePad ?? _linePaddingBottom;
+    final fs = fontSizeScale * uniformAyahScale;
     final baseStyle = _v1LineStyleFromLine(
       line,
-      fontSizeScale: fontSizeScale,
+      fontSizeScale: fs,
       useWhiteTextOnDark: useWhiteTextOnDark,
+      ayahLineHeight: ayahLineHeight,
     );
     final lineStyle = line.isCentered
         ? baseStyle
         : getJustifiedLineStyle(line, baseStyle, contentW);
-    final lineWidth = _measureV1LineWidth(line.lineText, lineStyle);
-    final painter = TextPainter(
-      text: TextSpan(text: line.lineText, style: lineStyle),
-      textDirection: TextDirection.rtl,
-      maxLines: 1,
-    )..layout(maxWidth: double.infinity);
+    final layoutMaxW = contentW;
+    final painter = mushafLaidOutRtlLinePainterV1Highlight(
+      line.lineText,
+      lineStyle,
+      layoutMaxW,
+      lineCentered: line.isCentered,
+    );
+    final lineWidth = layoutMaxW;
+    final v1WordSpacingJustified =
+        _v1LineUsesWordSpacingJustification(line, baseStyle, lineStyle);
+    final rtlGeom = !line.isCentered && !v1WordSpacingJustified;
+    final leftAdjust = _v1ResolvedLineLeftAdjustment(
+      line: line,
+      painter: painter,
+      lineWidth: lineWidth,
+    );
+    final v1FlatBand = mushafHighlightBandFromLineMetrics(painter);
 
     final persistentRects = <({double left, double width, Color color})>[];
     for (final sel in persistentSelections) {
       final start = sel.$2.clamp(0, line.lineText.length);
       final end = sel.$3.clamp(0, line.lineText.length);
       if (end <= start) continue;
-      final startOffset =
-          painter.getOffsetForCaret(TextPosition(offset: start), Rect.zero);
-      final endOffset =
-          painter.getOffsetForCaret(TextPosition(offset: end), Rect.zero);
-      final left =
-          startOffset.dx < endOffset.dx ? startOffset.dx : endOffset.dx;
-      final width = (endOffset.dx - startOffset.dx).abs();
-      if (width > 0.01) {
-        persistentRects.add((left: left, width: width, color: sel.$4));
+      final rect = mushafWordHighlightRect(
+        painter: painter,
+        text: line.lineText,
+        style: lineStyle,
+        startChar: start,
+        endChar: end,
+        rtlRightAlignedLayoutWidth: lineWidth,
+        rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+        preferCaretHorizontalBounds: v1WordSpacingJustified,
+      );
+      if (rect != null && rect.width > 0.01) {
+        persistentRects
+            .add((left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
       }
     }
     final mergedPersistentRects =
@@ -1228,125 +1331,103 @@ class _QuranReaderState extends State<QuranReader> {
         line,
         contentW: contentW,
         fontSizeScale: fontSizeScale,
+        uniformAyahScale: uniformAyahScale,
         linePad: linePad,
         useWhiteTextOnDark: useWhiteTextOnDark,
+        ayahLineHeight: ayahLineHeight,
       );
     }
 
-    double? wordLeft;
-    double? wordWidth;
+    final wordColor =
+        useWhiteTextOnDark ? const Color(0xFF7CFFC4) : const Color(0xFFB8E6C1);
+    final wordAlpha = useWhiteTextOnDark ? 0.48 : 0.30;
+    final overlayWidgets = <Widget>[
+      for (final r in mergedPersistentRects)
+        _buildV1PersistentHighlightSegment(r, painter.height),
+    ];
     if (wordRange != null &&
         wordRange.$1 >= 0 &&
         wordRange.$2 <= line.lineText.length &&
         wordRange.$2 > wordRange.$1) {
-      final wStart = painter.getOffsetForCaret(
-          TextPosition(offset: wordRange.$1.clamp(0, line.lineText.length)),
-          Rect.zero);
-      final wEnd = painter.getOffsetForCaret(
-          TextPosition(offset: wordRange.$2.clamp(0, line.lineText.length)),
-          Rect.zero);
-      wordLeft = wStart.dx < wEnd.dx ? wStart.dx : wEnd.dx;
-      wordWidth = (wEnd.dx - wStart.dx).abs();
+      final wordR = mushafRangeHorizontalRectWithFallback(
+        painter: painter,
+        text: line.lineText,
+        style: lineStyle,
+        startChar: wordRange.$1.clamp(0, line.lineText.length),
+        endChar: wordRange.$2.clamp(0, line.lineText.length),
+        rtlRightAlignedLayoutWidth: lineWidth,
+        rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+        preferCaretHorizontalBounds: v1WordSpacingJustified,
+      );
+      if (wordR.width > 0.01) {
+        overlayWidgets.add(mushafFlatHighlightBar(
+          left: wordR.left + leftAdjust,
+          width: wordR.width,
+          lineHeight: painter.height,
+          bandTop: v1FlatBand.top,
+          bandHeight: v1FlatBand.height,
+          color: wordColor,
+          alpha: wordAlpha,
+        ));
+      }
     }
-    final wordColor =
-        useWhiteTextOnDark ? const Color(0xFF7CFFC4) : const Color(0xFFB8E6C1);
-    final wordAlpha = useWhiteTextOnDark ? 0.48 : 0.30;
-    final alignment =
-        line.isCentered ? Alignment.center : Alignment.centerRight;
-    return Padding(
+    return _v1AyahLineVisualShellStatic(
+      line: line,
+      lineWidth: lineWidth,
+      lineHeight: painter.height,
+      lineStyle: lineStyle,
+      overlayWidgets: overlayWidgets,
       padding: EdgeInsets.only(bottom: pad),
-      child: Align(
-        alignment: alignment,
-        child: SizedBox(
-          width: double.infinity,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: _kV1FittedLineAlignment,
-            child: SizedBox(
-              width: lineWidth,
-              height: painter.height,
-              child: Stack(
-                alignment: Alignment.centerRight,
-                children: [
-                  Text(
-                    line.lineText,
-                    textDirection: TextDirection.rtl,
-                    textAlign:
-                        line.isCentered ? TextAlign.center : TextAlign.right,
-                    softWrap: false,
-                    maxLines: 1,
-                    overflow: TextOverflow.visible,
-                    style: lineStyle,
-                  ),
-                  ...mergedPersistentRects.map((rect) =>
-                      _buildV1PersistentHighlightSegment(rect, painter.height)),
-                  if (wordLeft != null && wordWidth != null)
-                    Positioned(
-                      left: wordLeft,
-                      top: 0,
-                      width: wordWidth,
-                      height: painter.height,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: wordColor.withValues(alpha: wordAlpha),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 
   static Widget _buildV1LineWithAyahOverlayStatic(
       MushafPageLine line, double contentW, int startChar, int endChar,
       {(int, int)? wordRange,
+      List<(int, int, int, Color)>? persistentAlso,
       double fontSizeScale = 1.0,
+      double uniformAyahScale = 1.0,
       double? linePad,
-      bool useWhiteTextOnDark = false}) {
+      bool useWhiteTextOnDark = false,
+      double? ayahLineHeight}) {
     final pad = linePad ?? _linePaddingBottom;
+    final fs = fontSizeScale * uniformAyahScale;
     final baseStyle = _v1LineStyleFromLine(
       line,
-      fontSizeScale: fontSizeScale,
+      fontSizeScale: fs,
       useWhiteTextOnDark: useWhiteTextOnDark,
+      ayahLineHeight: ayahLineHeight,
     );
     final lineStyle = line.isCentered
         ? baseStyle
         : getJustifiedLineStyle(line, baseStyle, contentW);
-    final lineWidth = _measureV1LineWidth(line.lineText, lineStyle);
-    final painter = TextPainter(
-      text: TextSpan(text: line.lineText, style: lineStyle),
-      textDirection: TextDirection.rtl,
-      maxLines: 1,
-    )..layout(maxWidth: double.infinity);
-    final startOffset = painter.getOffsetForCaret(
-        TextPosition(offset: startChar.clamp(0, line.lineText.length)),
-        Rect.zero);
-    final endOffset = painter.getOffsetForCaret(
-        TextPosition(offset: endChar.clamp(0, line.lineText.length)),
-        Rect.zero);
-    final left = startOffset.dx < endOffset.dx ? startOffset.dx : endOffset.dx;
-    final width = (endOffset.dx - startOffset.dx).abs();
-
-    double? wordLeft;
-    double? wordWidth;
-    if (wordRange != null &&
-        wordRange.$1 >= 0 &&
-        wordRange.$2 <= line.lineText.length &&
-        wordRange.$2 > wordRange.$1) {
-      final wStart = painter.getOffsetForCaret(
-          TextPosition(offset: wordRange.$1.clamp(0, line.lineText.length)),
-          Rect.zero);
-      final wEnd = painter.getOffsetForCaret(
-          TextPosition(offset: wordRange.$2.clamp(0, line.lineText.length)),
-          Rect.zero);
-      wordLeft = wStart.dx < wEnd.dx ? wStart.dx : wEnd.dx;
-      wordWidth = (wEnd.dx - wStart.dx).abs();
-    }
+    final layoutMaxW = contentW;
+    final painter = mushafLaidOutRtlLinePainterV1Highlight(
+      line.lineText,
+      lineStyle,
+      layoutMaxW,
+      lineCentered: line.isCentered,
+    );
+    final lineWidth = layoutMaxW;
+    final v1WordSpacingJustified =
+        _v1LineUsesWordSpacingJustification(line, baseStyle, lineStyle);
+    final rtlGeom = !line.isCentered && !v1WordSpacingJustified;
+    final leftAdjust = _v1ResolvedLineLeftAdjustment(
+      line: line,
+      painter: painter,
+      lineWidth: lineWidth,
+    );
+    final v1FlatBand = mushafHighlightBandFromLineMetrics(painter);
+    final ayahR = mushafRangeHorizontalRectWithFallback(
+      painter: painter,
+      text: line.lineText,
+      style: lineStyle,
+      startChar: startChar.clamp(0, line.lineText.length),
+      endChar: endChar.clamp(0, line.lineText.length),
+      rtlRightAlignedLayoutWidth: lineWidth,
+      rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+      preferCaretHorizontalBounds: v1WordSpacingJustified,
+    );
 
     final ayahColor = useWhiteTextOnDark
         ? const Color(0xFFB3E5FC)
@@ -1355,64 +1436,74 @@ class _QuranReaderState extends State<QuranReader> {
         useWhiteTextOnDark ? const Color(0xFF7CFFC4) : const Color(0xFFB8E6C1);
     final ayahAlpha = useWhiteTextOnDark ? 0.34 : 0.18;
     final wordAlpha = useWhiteTextOnDark ? 0.48 : 0.30;
-    final alignment =
-        line.isCentered ? Alignment.center : Alignment.centerRight;
-    return Padding(
-      padding: EdgeInsets.only(bottom: pad),
-      child: Align(
-        alignment: alignment,
-        child: SizedBox(
-          width: double.infinity,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: _kV1FittedLineAlignment,
-            child: SizedBox(
-              width: lineWidth,
-              height: painter.height,
-              child: Stack(
-                alignment: Alignment.centerRight,
-                children: [
-                  Text(
-                    line.lineText,
-                    textDirection: TextDirection.rtl,
-                    textAlign:
-                        line.isCentered ? TextAlign.center : TextAlign.right,
-                    softWrap: false,
-                    maxLines: 1,
-                    overflow: TextOverflow.visible,
-                    style: lineStyle,
-                  ),
-                  Positioned(
-                    left: left,
-                    top: 0,
-                    width: width,
-                    height: painter.height,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: ayahColor.withValues(alpha: ayahAlpha),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  if (wordLeft != null && wordWidth != null)
-                    Positioned(
-                      left: wordLeft,
-                      top: 0,
-                      width: wordWidth,
-                      height: painter.height,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: wordColor.withValues(alpha: wordAlpha),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
+    final overlayWidgets = <Widget>[];
+    if (persistentAlso != null && persistentAlso.isNotEmpty) {
+      final persistentRects = <({double left, double width, Color color})>[];
+      for (final sel in persistentAlso) {
+        final rect = mushafWordHighlightRect(
+          painter: painter,
+          text: line.lineText,
+          style: lineStyle,
+          startChar: sel.$2.clamp(0, line.lineText.length),
+          endChar: sel.$3.clamp(0, line.lineText.length),
+          rtlRightAlignedLayoutWidth: lineWidth,
+          rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+          preferCaretHorizontalBounds: v1WordSpacingJustified,
+        );
+        if (rect != null && rect.width > 0.01) {
+          persistentRects
+              .add((left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
+        }
+      }
+      for (final r in _mergeV1PersistentRectsByColor(persistentRects)) {
+        overlayWidgets
+            .add(_buildV1PersistentHighlightSegment(r, painter.height));
+      }
+    }
+    overlayWidgets.add(
+      mushafFlatHighlightBar(
+        left: ayahR.left + leftAdjust,
+        width: ayahR.width,
+        lineHeight: painter.height,
+        bandTop: v1FlatBand.top,
+        bandHeight: v1FlatBand.height,
+        color: ayahColor,
+        alpha: ayahAlpha,
       ),
+    );
+    if (wordRange != null &&
+        wordRange.$1 >= 0 &&
+        wordRange.$2 <= line.lineText.length &&
+        wordRange.$2 > wordRange.$1) {
+      final wordR = mushafRangeHorizontalRectWithFallback(
+        painter: painter,
+        text: line.lineText,
+        style: lineStyle,
+        startChar: wordRange.$1.clamp(0, line.lineText.length),
+        endChar: wordRange.$2.clamp(0, line.lineText.length),
+        rtlRightAlignedLayoutWidth: lineWidth,
+        rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+        preferCaretHorizontalBounds: v1WordSpacingJustified,
+      );
+      if (wordR.width > 0.01) {
+        overlayWidgets.add(mushafFlatHighlightBar(
+          left: wordR.left + leftAdjust,
+          width: wordR.width,
+          lineHeight: painter.height,
+          bandTop: v1FlatBand.top,
+          bandHeight: v1FlatBand.height,
+          color: wordColor,
+          alpha: wordAlpha,
+        ));
+      }
+    }
+    return _v1AyahLineVisualShellStatic(
+      line: line,
+      lineWidth: lineWidth,
+      lineHeight: painter.height,
+      lineStyle: lineStyle,
+      overlayWidgets: overlayWidgets,
+      padding: EdgeInsets.only(bottom: pad),
     );
   }
 
@@ -1420,93 +1511,89 @@ class _QuranReaderState extends State<QuranReader> {
   static Widget _buildV1LineWithWordOverlayOnlyStatic(
       MushafPageLine line, double contentW, int wordStart, int wordEnd,
       {double fontSizeScale = 1.0,
+      double uniformAyahScale = 1.0,
       double? linePad,
-      bool useWhiteTextOnDark = false}) {
+      bool useWhiteTextOnDark = false,
+      double? ayahLineHeight}) {
     final pad = linePad ?? _linePaddingBottom;
+    final fs = fontSizeScale * uniformAyahScale;
     final baseStyle = _v1LineStyleFromLine(
       line,
-      fontSizeScale: fontSizeScale,
+      fontSizeScale: fs,
       useWhiteTextOnDark: useWhiteTextOnDark,
+      ayahLineHeight: ayahLineHeight,
     );
     final lineStyle = line.isCentered
         ? baseStyle
         : getJustifiedLineStyle(line, baseStyle, contentW);
-    final lineWidth = _measureV1LineWidth(line.lineText, lineStyle);
-    final painter = TextPainter(
-      text: TextSpan(text: line.lineText, style: lineStyle),
-      textDirection: TextDirection.rtl,
-      maxLines: 1,
-    )..layout(maxWidth: double.infinity);
-    double? wordLeft;
-    double? wordWidth;
-    if (wordStart >= 0 &&
-        wordEnd <= line.lineText.length &&
-        wordEnd > wordStart) {
-      final wStart = painter.getOffsetForCaret(
-          TextPosition(offset: wordStart.clamp(0, line.lineText.length)),
-          Rect.zero);
-      final wEnd = painter.getOffsetForCaret(
-          TextPosition(offset: wordEnd.clamp(0, line.lineText.length)),
-          Rect.zero);
-      wordLeft = wStart.dx < wEnd.dx ? wStart.dx : wEnd.dx;
-      wordWidth = (wEnd.dx - wStart.dx).abs();
-    }
-    if (wordLeft == null || wordWidth == null) {
+    final layoutMaxW = contentW;
+    final painter = mushafLaidOutRtlLinePainterV1Highlight(
+      line.lineText,
+      lineStyle,
+      layoutMaxW,
+      lineCentered: line.isCentered,
+    );
+    final lineWidth = layoutMaxW;
+    final v1WordSpacingJustified =
+        _v1LineUsesWordSpacingJustification(line, baseStyle, lineStyle);
+    final rtlGeom = !line.isCentered && !v1WordSpacingJustified;
+    final leftAdjust = _v1ResolvedLineLeftAdjustment(
+      line: line,
+      painter: painter,
+      lineWidth: lineWidth,
+    );
+    final v1FlatBand = mushafHighlightBandFromLineMetrics(painter);
+    if (wordStart < 0 ||
+        wordEnd > line.lineText.length ||
+        wordEnd <= wordStart) {
       return _buildLineStatic(line,
           contentW: contentW,
           fontSizeScale: fontSizeScale,
+          uniformAyahScale: uniformAyahScale,
           linePad: linePad,
-          useWhiteTextOnDark: useWhiteTextOnDark);
+          useWhiteTextOnDark: useWhiteTextOnDark,
+          ayahLineHeight: ayahLineHeight);
+    }
+    final wordR = mushafRangeHorizontalRectWithFallback(
+      painter: painter,
+      text: line.lineText,
+      style: lineStyle,
+      startChar: wordStart.clamp(0, line.lineText.length),
+      endChar: wordEnd.clamp(0, line.lineText.length),
+      rtlRightAlignedLayoutWidth: lineWidth,
+      rtlRightAlignedLayoutWidthIsMeaningful: rtlGeom,
+      preferCaretHorizontalBounds: v1WordSpacingJustified,
+    );
+    if (wordR.width <= 0.01) {
+      return _buildLineStatic(line,
+          contentW: contentW,
+          fontSizeScale: fontSizeScale,
+          uniformAyahScale: uniformAyahScale,
+          linePad: linePad,
+          useWhiteTextOnDark: useWhiteTextOnDark,
+          ayahLineHeight: ayahLineHeight);
     }
     final ayahColor = useWhiteTextOnDark
         ? const Color(0xFFB3E5FC)
         : const Color.fromARGB(255, 45, 45, 45);
     final ayahAlpha = useWhiteTextOnDark ? 0.34 : 0.18;
-    final alignment =
-        line.isCentered ? Alignment.center : Alignment.centerRight;
-    return Padding(
-      padding: EdgeInsets.only(bottom: pad),
-      child: Align(
-        alignment: alignment,
-        child: SizedBox(
-          width: double.infinity,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: _kV1FittedLineAlignment,
-            child: SizedBox(
-              width: lineWidth,
-              height: painter.height,
-              child: Stack(
-                alignment: Alignment.centerRight,
-                children: [
-                  Text(
-                    line.lineText,
-                    textDirection: TextDirection.rtl,
-                    textAlign:
-                        line.isCentered ? TextAlign.center : TextAlign.right,
-                    softWrap: false,
-                    maxLines: 1,
-                    overflow: TextOverflow.visible,
-                    style: lineStyle,
-                  ),
-                  Positioned(
-                    left: wordLeft,
-                    top: 0,
-                    width: wordWidth,
-                    height: painter.height,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: ayahColor.withValues(alpha: ayahAlpha),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    return _v1AyahLineVisualShellStatic(
+      line: line,
+      lineWidth: lineWidth,
+      lineHeight: painter.height,
+      lineStyle: lineStyle,
+      overlayWidgets: [
+        mushafFlatHighlightBar(
+          left: wordR.left + leftAdjust,
+          width: wordR.width,
+          lineHeight: painter.height,
+          bandTop: v1FlatBand.top,
+          bandHeight: v1FlatBand.height,
+          color: ayahColor,
+          alpha: ayahAlpha,
         ),
-      ),
+      ],
+      padding: EdgeInsets.only(bottom: pad),
     );
   }
 
@@ -1523,7 +1610,7 @@ class _QuranReaderState extends State<QuranReader> {
             setState(() => _currentPageIndex = index);
             widget.onPageChanged?.call(index + 1);
             final pageNum = index + 1;
-            PageCache.instance.pruneToWindow(pageNum);
+            PageCache.instance.trimRamToNearbyPages(pageNum);
             if (_effectiveMode == QpcMushafMode.qpc4 ||
                 _effectiveMode == QpcMushafMode.qpc4Black) {
               preloadNearbyPages(pageNum);
