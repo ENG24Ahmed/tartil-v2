@@ -1,0 +1,8 @@
+# انسخ هذا الملف إلى android/key.properties وعبّي القيم.
+# لا ترفع key.properties ولا ملف .jks إلى Git (موجودة في .gitignore).
+
+storePassword=ضع_كلمة_متجر_المفتاح
+keyPassword=ضع_كلمة_مفتاح_المفتاح
+keyAlias=upload
+# مسار ملف المفتاح نسبةً إلى مجلد android/ (مثال: الملف بجانب هذا المثال)
+storeFile=upload-keystore.jks
