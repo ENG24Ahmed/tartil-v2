@@ -78,6 +78,7 @@ Future<T?> _showQuranMenuSidePanel<T>({
   Color backgroundColor = const Color(0xFFE8F5E9),
   bool isScrollControlled = false,
   ShapeBorder? bottomSheetShape,
+
   /// عند true لا يُمرَّر [shape] لـ [showModalBottomSheet] (مثل منتقي الصفحة الشفاف).
   bool omitBottomSheetShape = false,
 }) {
@@ -237,8 +238,7 @@ class _QuranMenuPaletteData {
     title: const Color(0xFF1B5E20),
     subtitle: const Color(0xFF616161),
     accent: const Color(0xFF2E7D32),
-    tileLeadingDecorationColor:
-        const Color(0xFF2E7D32).withValues(alpha: 0.12),
+    tileLeadingDecorationColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
     tileLeadingIconColor: const Color(0xFF1B5E20),
     divider: const Color(0xFFE0E0E0),
     trailingChevron: const Color(0xFF9E9E9E),
@@ -804,8 +804,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   static const _keyArabicUiFontId = 'arabic_ui_font_id';
   static const _keyLongScrollSeamless = 'long_scroll_seamless_reading';
   static const _keyMenuDarkMode = 'menu_dark_mode';
-  static const _keyFullMushafBackgroundWarmup =
-      'full_mushaf_background_warmup';
+  static const _keyFullMushafBackgroundWarmup = 'full_mushaf_background_warmup';
 
   /// ألوان الخلفية المتاحة لشكل المصحف
   static const Color _bgWhite = Colors.white;
@@ -1063,19 +1062,18 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   _QuranMenuPaletteData get _menuPal =>
       _menuDarkMode ? _QuranMenuPaletteData.dark : _QuranMenuPaletteData.light;
 
-  String get _arabicUiFontFamily => _arabicUiFontFamilyResolved(_arabicUiFontId);
+  String get _arabicUiFontFamily =>
+      _arabicUiFontFamilyResolved(_arabicUiFontId);
 
   String _arabicUiFontSettingsSubtitle() {
-    final i =
-        _kArabicUiFontChoices.indexWhere((c) => c.id == _arabicUiFontId);
+    final i = _kArabicUiFontChoices.indexWhere((c) => c.id == _arabicUiFontId);
     if (i < 0) return 'معاينة ثم تطبيق';
     return 'الخط الحالي: خط ${_toNormalDigits(i + 1)}';
   }
 
   /// سطر ملخّص لبند «إعدادات الخط» في الإعدادات الرئيسية.
   String _fontSettingsEntrySubtitle() {
-    final i =
-        _kArabicUiFontChoices.indexWhere((c) => c.id == _arabicUiFontId);
+    final i = _kArabicUiFontChoices.indexWhere((c) => c.id == _arabicUiFontId);
     final lineNo = i >= 0 ? _toNormalDigits(i + 1) : '؟';
     return 'قوائم ${_ltrUiPercent((_menuFontScale * 100).round())} — خط $lineNo — تفسير ${_ltrUiPercent((_tafsirFontScale * 100).round())}';
   }
@@ -1090,9 +1088,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   /// ملخص سطر «إعدادات المشغل» في الإعدادات الرئيسية.
   String _playerSettingsEntrySubtitle() {
     final player = AyahAudioPlayer.instance;
-    final reciter = kAyahReciters
-        .where((r) => r.id == player.currentReciterId)
-        .firstOrNull;
+    final reciter =
+        kAyahReciters.where((r) => r.id == player.currentReciterId).firstOrNull;
     final reciterName = reciter?.nameAr ?? 'غير محدد';
     final hl = player.showAyahHighlight ? 'تضليل مُفعل' : 'تضليل غير مُفعل';
     final mode = _playbackModeLabel(player.playbackMode);
@@ -1735,10 +1732,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     _tafsirFontScale =
         (prefs.getDouble(_keyTafsirFontScale) ?? 1.0).clamp(0.85, 1.4);
     final storedFontId = prefs.getString(_keyArabicUiFontId);
-    _arabicUiFontId = (storedFontId != null &&
-            _arabicUiFontChoiceForId(storedFontId) != null)
-        ? storedFontId
-        : _kArabicUiFontIdUthmani;
+    _arabicUiFontId =
+        (storedFontId != null && _arabicUiFontChoiceForId(storedFontId) != null)
+            ? storedFontId
+            : _kArabicUiFontIdUthmani;
     await MushafIntroPrefs.migrateLegacyUsers();
     if (await MushafIntroPrefs.isCompleted()) {
       _mushafIntroStep = MushafIntroPrefs.completedMarker;
@@ -2805,240 +2802,240 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         ),
         backgroundColor: _menuPal.surface,
         builder: (ctx) => _wrapMainMenuFamilyOverlay(
-              ctx,
-              Directionality(
-                textDirection: TextDirection.rtl,
-                child: StatefulBuilder(
-                  builder: (ctx, setLocalState) {
-                    final pal = _menuPal;
-                    final cardBg =
-                        pal.isDark ? pal.cardSurface : Colors.white;
-                    final cardBorder = pal.divider;
-                    return Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      14,
-                      16,
-                      16 + MediaQuery.of(ctx).viewInsets.bottom,
-                    ),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            isEditing ? 'تعديل التضليل' : 'تضليل الآيات',
-                            textAlign: TextAlign.center,
-                            style: _menuQuranStyle(
-                              fontSize: 19,
-                              color: pal.title,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: cardBg,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: cardBorder),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.03),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 10,
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: _AyahWheelPicker(
-                              title: 'السورة',
-                              arabicFontFamily: _arabicUiFontFamily,
-                              controller: suraController,
-                              itemCount: _suraList.length,
-                              itemBuilder: (i) =>
-                                  '${i + 1} ${_suraList[i].nameAr.replaceAll('سورة ', '')}',
-                              onSelectedItemChanged: (i) {
-                                setLocalState(() {
-                                  selectedSuraIndex = i;
-                                  selectedSura = _suraList[i].no;
-                                  ayahCount =
-                                      (_suraAyahCount[selectedSura] ?? 286)
-                                          .clamp(1, 286);
-                                  if (fromAyah > ayahCount)
-                                    fromAyah = ayahCount;
-                                  if (toAyah > ayahCount) toAyah = ayahCount;
-                                });
-                                if (fromController.selectedItem !=
-                                    fromAyah - 1) {
-                                  fromController.jumpToItem(fromAyah - 1);
-                                }
-                                if (toController.selectedItem != toAyah - 1) {
-                                  toController.jumpToItem(toAyah - 1);
-                                }
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _AyahWheelPicker(
-                              title: 'من آية',
-                              arabicFontFamily: _arabicUiFontFamily,
-                              controller: fromController,
-                              itemCount: ayahCount,
-                              itemBuilder: (i) => 'آية ${i + 1}',
-                              onSelectedItemChanged: (i) {
-                                setLocalState(() => fromAyah = i + 1);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _AyahWheelPicker(
-                              title: 'إلى آية',
-                              arabicFontFamily: _arabicUiFontFamily,
-                              controller: toController,
-                              itemCount: ayahCount,
-                              itemBuilder: (i) => 'آية ${i + 1}',
-                              onSelectedItemChanged: (i) {
-                                setLocalState(() => toAyah = i + 1);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: cardBg,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: cardBorder),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: colors.map((c) {
-                          final selected =
-                              c.toARGB32() == selectedColor.toARGB32();
-                          final labelOnTint = Color.lerp(
-                                c,
-                                pal.isDark ? Colors.white : Colors.black,
-                                pal.isDark ? 0.92 : 0.78,
-                              ) ??
-                              pal.title;
-                          return Flexible(
-                            child: ChoiceChip(
-                              showCheckmark: false,
-                              label: Text(
-                                selected ? 'مختار' : 'لون',
-                                style: _menuQuranStyle(
-                                  fontSize: 12,
-                                  color: selected
-                                      ? Colors.white
-                                      : labelOnTint,
-                                ),
-                              ),
-                              selected: selected,
-                              selectedColor: c,
-                              backgroundColor: c.withValues(alpha: 0.24),
-                              side: BorderSide(
-                                color: selected
-                                    ? c
-                                    : pal.divider,
-                                width: selected ? 1.5 : 1,
-                              ),
-                              onSelected: (_) =>
-                                  setLocalState(() => selectedColor = c),
-                            ),
-                          );
-                        }).toList(growable: false),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: pal.accent,
-                              side: BorderSide(
-                                color: pal.accent.withValues(alpha: 0.55),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            onPressed: () => Navigator.pop(ctx),
-                            icon: Icon(Icons.close, color: pal.accent),
-                            label: Text(
-                              'إلغاء التضليل',
-                              style: _menuQuranStyle(
-                                fontSize: 16,
-                                color: pal.accent,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: pal.accent,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            onPressed: () async {
-                              Navigator.pop(ctx);
-                              await _applyAyahHighlightRange(
-                                sura: selectedSura,
-                                fromAyah: fromAyah,
-                                toAyah: toAyah,
-                                color: selectedColor,
-                                replace: editing,
-                              );
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isEditing
-                                        ? 'تم تحديث التضليل'
-                                        : 'تم حفظ التضليل من آية ${_toNormalDigits(fromAyah)} إلى ${_toNormalDigits(toAyah)}',
-                                    style: _menuQuranStyle(
-                                        fontSize: 14, color: Colors.white),
-                                  ),
-                                  backgroundColor: pal.accent,
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.highlight),
-                            label: Text(
-                              isEditing ? 'حفظ التعديل' : 'تطبيق التضليل',
-                              style: _menuQuranStyle(
-                                  fontSize: 16, color: Colors.white),
-                            ),
-                          ),
-                        ),
-                        ],
-                      ),
-                    ],
+          ctx,
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: StatefulBuilder(
+              builder: (ctx, setLocalState) {
+                final pal = _menuPal;
+                final cardBg = pal.isDark ? pal.cardSurface : Colors.white;
+                final cardBorder = pal.divider;
+                return Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    14,
+                    16,
+                    16 + MediaQuery.of(ctx).viewInsets.bottom,
                   ),
-                ),
-                    );
-                  },
-                ),
-              ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          isEditing ? 'تعديل التضليل' : 'تضليل الآيات',
+                          textAlign: TextAlign.center,
+                          style: _menuQuranStyle(
+                            fontSize: 19,
+                            color: pal.title,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: cardBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: cardBorder),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: _AyahWheelPicker(
+                                  title: 'السورة',
+                                  arabicFontFamily: _arabicUiFontFamily,
+                                  controller: suraController,
+                                  itemCount: _suraList.length,
+                                  itemBuilder: (i) =>
+                                      '${i + 1} ${_suraList[i].nameAr.replaceAll('سورة ', '')}',
+                                  onSelectedItemChanged: (i) {
+                                    setLocalState(() {
+                                      selectedSuraIndex = i;
+                                      selectedSura = _suraList[i].no;
+                                      ayahCount =
+                                          (_suraAyahCount[selectedSura] ?? 286)
+                                              .clamp(1, 286);
+                                      if (fromAyah > ayahCount)
+                                        fromAyah = ayahCount;
+                                      if (toAyah > ayahCount)
+                                        toAyah = ayahCount;
+                                    });
+                                    if (fromController.selectedItem !=
+                                        fromAyah - 1) {
+                                      fromController.jumpToItem(fromAyah - 1);
+                                    }
+                                    if (toController.selectedItem !=
+                                        toAyah - 1) {
+                                      toController.jumpToItem(toAyah - 1);
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _AyahWheelPicker(
+                                  title: 'من آية',
+                                  arabicFontFamily: _arabicUiFontFamily,
+                                  controller: fromController,
+                                  itemCount: ayahCount,
+                                  itemBuilder: (i) => 'آية ${i + 1}',
+                                  onSelectedItemChanged: (i) {
+                                    setLocalState(() => fromAyah = i + 1);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _AyahWheelPicker(
+                                  title: 'إلى آية',
+                                  arabicFontFamily: _arabicUiFontFamily,
+                                  controller: toController,
+                                  itemCount: ayahCount,
+                                  itemBuilder: (i) => 'آية ${i + 1}',
+                                  onSelectedItemChanged: (i) {
+                                    setLocalState(() => toAyah = i + 1);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: cardBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: cardBorder),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: colors.map((c) {
+                              final selected =
+                                  c.toARGB32() == selectedColor.toARGB32();
+                              final labelOnTint = Color.lerp(
+                                    c,
+                                    pal.isDark ? Colors.white : Colors.black,
+                                    pal.isDark ? 0.92 : 0.78,
+                                  ) ??
+                                  pal.title;
+                              return Flexible(
+                                child: ChoiceChip(
+                                  showCheckmark: false,
+                                  label: Text(
+                                    selected ? 'مختار' : 'لون',
+                                    style: _menuQuranStyle(
+                                      fontSize: 12,
+                                      color:
+                                          selected ? Colors.white : labelOnTint,
+                                    ),
+                                  ),
+                                  selected: selected,
+                                  selectedColor: c,
+                                  backgroundColor: c.withValues(alpha: 0.24),
+                                  side: BorderSide(
+                                    color: selected ? c : pal.divider,
+                                    width: selected ? 1.5 : 1,
+                                  ),
+                                  onSelected: (_) =>
+                                      setLocalState(() => selectedColor = c),
+                                ),
+                              );
+                            }).toList(growable: false),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: pal.accent,
+                                  side: BorderSide(
+                                    color: pal.accent.withValues(alpha: 0.55),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                onPressed: () => Navigator.pop(ctx),
+                                icon: Icon(Icons.close, color: pal.accent),
+                                label: Text(
+                                  'إلغاء التضليل',
+                                  style: _menuQuranStyle(
+                                    fontSize: 16,
+                                    color: pal.accent,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: pal.accent,
+                                  foregroundColor: Colors.white,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                onPressed: () async {
+                                  Navigator.pop(ctx);
+                                  await _applyAyahHighlightRange(
+                                    sura: selectedSura,
+                                    fromAyah: fromAyah,
+                                    toAyah: toAyah,
+                                    color: selectedColor,
+                                    replace: editing,
+                                  );
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        isEditing
+                                            ? 'تم تحديث التضليل'
+                                            : 'تم حفظ التضليل من آية ${_toNormalDigits(fromAyah)} إلى ${_toNormalDigits(toAyah)}',
+                                        style: _menuQuranStyle(
+                                            fontSize: 14, color: Colors.white),
+                                      ),
+                                      backgroundColor: pal.accent,
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.highlight),
+                                label: Text(
+                                  isEditing ? 'حفظ التعديل' : 'تطبيق التضليل',
+                                  style: _menuQuranStyle(
+                                      fontSize: 16, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
+          ),
+        ),
       );
     } finally {
       MushafRamIdleExpander.instance.endBlockingUi();
@@ -5281,255 +5278,255 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     ),
                     Divider(height: 1, color: _menuPal.divider),
                     ListTile(
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _menuPal.tileLeadingDecorationColor,
-                        borderRadius: BorderRadius.circular(12),
+                      leading: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _menuPal.tileLeadingDecorationColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.palette_rounded,
+                          color: _menuPal.tileLeadingIconColor,
+                          size: 24,
+                        ),
                       ),
-                      child: Icon(
-                        Icons.palette_rounded,
-                        color: _menuPal.tileLeadingIconColor,
-                        size: 24,
+                      title: Text(
+                        'شكل المصحف',
+                        style: _menuQuranStyle(
+                          fontSize: 17,
+                          color: _menuPal.title,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'لون الخلفية ونوع المصحف',
+                        style: _menuQuranStyle(
+                          fontSize: 13,
+                          color: _menuPal.subtitle,
+                          fontWeight: FontWeight.normal,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: _menuPal.trailingChevron,
+                      ),
+                      onTap: () => _showMushafStyleSheet(ctx),
+                    ),
+                    ListTile(
+                      leading: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _menuPal.tileLeadingDecorationColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.text_fields_rounded,
+                          color: _menuPal.tileLeadingIconColor,
+                          size: 24,
+                        ),
+                      ),
+                      title: Text(
+                        'إعدادات الخط',
+                        style: _menuQuranStyle(
+                          fontSize: 17,
+                          color: _menuPal.title,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _fontSettingsEntrySubtitle(),
+                        style: _menuQuranStyle(
+                          fontSize: 13,
+                          color: _menuPal.subtitle,
+                          fontWeight: FontWeight.normal,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: _menuPal.trailingChevron,
+                      ),
+                      onTap: () => _showFontSettingsSheet(
+                        ctx,
+                        onParentListRefresh: () => setSheetState(() {}),
                       ),
                     ),
-                    title: Text(
-                      'شكل المصحف',
-                      style: _menuQuranStyle(
-                        fontSize: 17,
-                        color: _menuPal.title,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'لون الخلفية ونوع المصحف',
-                      style: _menuQuranStyle(
-                        fontSize: 13,
-                        color: _menuPal.subtitle,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                    trailing: Icon(
-                      Icons.arrow_forward_ios,
-                      size: 14,
-                      color: _menuPal.trailingChevron,
-                    ),
-                    onTap: () => _showMushafStyleSheet(ctx),
-                  ),
-                  ListTile(
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _menuPal.tileLeadingDecorationColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.text_fields_rounded,
-                        color: _menuPal.tileLeadingIconColor,
-                        size: 24,
-                      ),
-                    ),
-                    title: Text(
-                      'إعدادات الخط',
-                      style: _menuQuranStyle(
-                        fontSize: 17,
-                        color: _menuPal.title,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      _fontSettingsEntrySubtitle(),
-                      style: _menuQuranStyle(
-                        fontSize: 13,
-                        color: _menuPal.subtitle,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                    trailing: Icon(
-                      Icons.arrow_forward_ios,
-                      size: 14,
-                      color: _menuPal.trailingChevron,
-                    ),
-                    onTap: () => _showFontSettingsSheet(
-                      ctx,
-                      onParentListRefresh: () => setSheetState(() {}),
-                    ),
-                  ),
-                  ListenableBuilder(
-                    listenable: AyahAudioPlayer.instance,
-                    builder: (context, _) {
-                      return ListTile(
-                        leading: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: _menuPal.tileLeadingDecorationColor,
-                            borderRadius: BorderRadius.circular(12),
+                    ListenableBuilder(
+                      listenable: AyahAudioPlayer.instance,
+                      builder: (context, _) {
+                        return ListTile(
+                          leading: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: _menuPal.tileLeadingDecorationColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.play_circle_outline_rounded,
+                              color: _menuPal.tileLeadingIconColor,
+                              size: 24,
+                            ),
                           ),
-                          child: Icon(
-                            Icons.play_circle_outline_rounded,
-                            color: _menuPal.tileLeadingIconColor,
-                            size: 24,
+                          title: Text(
+                            'إعدادات المشغل',
+                            style: _menuQuranStyle(
+                              fontSize: 17,
+                              color: _menuPal.title,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                        title: Text(
-                          'إعدادات المشغل',
-                          style: _menuQuranStyle(
-                            fontSize: 17,
-                            color: _menuPal.title,
-                            fontWeight: FontWeight.w600,
+                          subtitle: Text(
+                            _playerSettingsEntrySubtitle(),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: _menuQuranStyle(
+                              fontSize: 13,
+                              color: _menuPal.subtitle,
+                              fontWeight: FontWeight.normal,
+                            ),
                           ),
-                        ),
-                        subtitle: Text(
-                          _playerSettingsEntrySubtitle(),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: _menuQuranStyle(
-                            fontSize: 13,
-                            color: _menuPal.subtitle,
-                            fontWeight: FontWeight.normal,
+                          trailing: Icon(
+                            Icons.arrow_forward_ios,
+                            size: 14,
+                            color: _menuPal.trailingChevron,
                           ),
+                          onTap: () => _showPlayerSettingsSheet(
+                            ctx,
+                            onParentListRefresh: () => setSheetState(() {}),
+                          ),
+                        );
+                      },
+                    ),
+                    SwitchListTile.adaptive(
+                      secondary: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _menuPal.tileLeadingDecorationColor,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        trailing: Icon(
-                          Icons.arrow_forward_ios,
-                          size: 14,
-                          color: _menuPal.trailingChevron,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.dark_mode_outlined,
+                          color: _menuPal.tileLeadingIconColor,
+                          size: 24,
                         ),
-                        onTap: () => _showPlayerSettingsSheet(
-                          ctx,
-                          onParentListRefresh: () => setSheetState(() {}),
+                      ),
+                      title: Text(
+                        'الوضع الداكن',
+                        style: _menuQuranStyle(
+                          fontSize: 17,
+                          color: _menuPal.title,
+                          fontWeight: FontWeight.w600,
                         ),
-                      );
-                    },
-                  ),
-                  SwitchListTile.adaptive(
-                    secondary: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _menuPal.tileLeadingDecorationColor,
-                        borderRadius: BorderRadius.circular(12),
                       ),
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.dark_mode_outlined,
-                        color: _menuPal.tileLeadingIconColor,
-                        size: 24,
+                      subtitle: Text(
+                        _menuDarkMode
+                            ? 'قوائم وألوان قريبة من قائمة الآية'
+                            : 'خلفية فاتحة ونص أخضر داكن',
+                        style: _menuQuranStyle(
+                          fontSize: 13,
+                          color: _menuPal.subtitle,
+                          fontWeight: FontWeight.normal,
+                        ),
                       ),
+                      value: _menuDarkMode,
+                      activeColor: _menuPal.switchActive,
+                      onChanged: (v) async {
+                        setState(() => _menuDarkMode = v);
+                        setSheetState(() {});
+                        await _saveMenuDarkModePref();
+                      },
                     ),
-                    title: Text(
-                      'الوضع الداكن',
-                      style: _menuQuranStyle(
-                        fontSize: 17,
-                        color: _menuPal.title,
-                        fontWeight: FontWeight.w600,
+                    SwitchListTile.adaptive(
+                      secondary: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _menuPal.tileLeadingDecorationColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.cloud_download_outlined,
+                          color: _menuPal.tileLeadingIconColor,
+                          size: 24,
+                        ),
                       ),
+                      title: Text(
+                        'تحميل المصحف في الخلفية كامل',
+                        style: _menuQuranStyle(
+                          fontSize: 17,
+                          color: _menuPal.title,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _fullMushafBackgroundWarmup
+                            ? 'مفعّل: في الخمول يتم تحميل صفحات المصحف كاملة تدريجيًا'
+                            : 'مطفأ: في الخمول يتم تحميل 7 صفحات بعد الصفحة الحالية فقط',
+                        style: _menuQuranStyle(
+                          fontSize: 13,
+                          color: _menuPal.subtitle,
+                          fontWeight: FontWeight.normal,
+                        ),
+                      ),
+                      value: _fullMushafBackgroundWarmup,
+                      activeTrackColor: _menuPal.switchActive,
+                      activeColor: _menuPal.switchActive,
+                      onChanged: (v) async {
+                        await _setFullMushafBackgroundWarmup(ctx, v);
+                        setSheetState(() {});
+                      },
                     ),
-                    subtitle: Text(
-                      _menuDarkMode
-                          ? 'قوائم وألوان قريبة من قائمة الآية'
-                          : 'خلفية فاتحة ونص أخضر داكن',
-                      style: _menuQuranStyle(
-                        fontSize: 13,
-                        color: _menuPal.subtitle,
-                        fontWeight: FontWeight.normal,
+                    ListTile(
+                      leading: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _menuPal.tileLeadingDecorationColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.info_outline,
+                          color: _menuPal.tileLeadingIconColor,
+                          size: 24,
+                        ),
                       ),
+                      title: Text(
+                        'حول التطبيق',
+                        style: _menuQuranStyle(
+                          fontSize: 17,
+                          color: _menuPal.title,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'نبذة , الإصدار والتواصل مع المطور',
+                        style: _menuQuranStyle(
+                          fontSize: 13,
+                          color: _menuPal.subtitle,
+                          fontWeight: FontWeight.normal,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: _menuPal.trailingChevron,
+                      ),
+                      onTap: () => _showAboutDialog(context),
                     ),
-                    value: _menuDarkMode,
-                    activeColor: _menuPal.switchActive,
-                    onChanged: (v) async {
-                      setState(() => _menuDarkMode = v);
-                      setSheetState(() {});
-                      await _saveMenuDarkModePref();
-                    },
-                  ),
-                  SwitchListTile.adaptive(
-                    secondary: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _menuPal.tileLeadingDecorationColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.cloud_download_outlined,
-                        color: _menuPal.tileLeadingIconColor,
-                        size: 24,
-                      ),
-                    ),
-                    title: Text(
-                      'تحميل المصحف في الخلفية كامل',
-                      style: _menuQuranStyle(
-                        fontSize: 17,
-                        color: _menuPal.title,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      _fullMushafBackgroundWarmup
-                          ? 'مفعّل: في الخمول يتم تحميل صفحات المصحف كاملة تدريجيًا'
-                          : 'مطفأ: في الخمول يتم تحميل 7 صفحات بعد الصفحة الحالية فقط',
-                      style: _menuQuranStyle(
-                        fontSize: 13,
-                        color: _menuPal.subtitle,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                    value: _fullMushafBackgroundWarmup,
-                    activeTrackColor: _menuPal.switchActive,
-                    activeColor: _menuPal.switchActive,
-                    onChanged: (v) async {
-                      await _setFullMushafBackgroundWarmup(ctx, v);
-                      setSheetState(() {});
-                    },
-                  ),
-                  ListTile(
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _menuPal.tileLeadingDecorationColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.info_outline,
-                        color: _menuPal.tileLeadingIconColor,
-                        size: 24,
-                      ),
-                    ),
-                    title: Text(
-                      'حول التطبيق',
-                      style: _menuQuranStyle(
-                        fontSize: 17,
-                        color: _menuPal.title,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'نبذة , الإصدار والتواصل مع المطور',
-                      style: _menuQuranStyle(
-                        fontSize: 13,
-                        color: _menuPal.subtitle,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                    trailing: Icon(
-                      Icons.arrow_forward_ios,
-                      size: 14,
-                      color: _menuPal.trailingChevron,
-                    ),
-                    onTap: () => _showAboutDialog(context),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                    const SizedBox(height: 12),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
       ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
@@ -5689,8 +5686,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               textDirection: TextDirection.rtl,
               child: SafeArea(
                 child: Column(
-                  mainAxisSize:
-                      sidePanel ? MainAxisSize.max : MainAxisSize.min,
+                  mainAxisSize: sidePanel ? MainAxisSize.max : MainAxisSize.min,
                   children: [
                     _NestedMenuAppBar(
                       title: 'إعدادات الخط',
@@ -5703,10 +5699,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                       onDismissAll: () => _dismissAllMenuOverlays(ctx),
                     ),
                     Divider(height: 1, color: _menuPal.divider),
-                    if (sidePanel)
-                      Expanded(child: scroll)
-                    else
-                      scroll,
+                    if (sidePanel) Expanded(child: scroll) else scroll,
                   ],
                 ),
               ),
@@ -5867,8 +5860,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                           color: _menuPal.trailingChevron,
                         ),
                         onTap: () async {
-                          final selected =
-                              await _showPlaybackModePicker(ctx);
+                          final selected = await _showPlaybackModePicker(ctx);
                           if (selected != null) {
                             await _setPlaybackMode(selected);
                             bump();
@@ -5886,8 +5878,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               textDirection: TextDirection.rtl,
               child: SafeArea(
                 child: Column(
-                  mainAxisSize:
-                      sidePanel ? MainAxisSize.max : MainAxisSize.min,
+                  mainAxisSize: sidePanel ? MainAxisSize.max : MainAxisSize.min,
                   children: [
                     _NestedMenuAppBar(
                       title: 'إعدادات المشغل',
@@ -6097,16 +6088,15 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                                   ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black
-                                          .withValues(alpha: 0.05),
+                                      color:
+                                          Colors.black.withValues(alpha: 0.05),
                                       blurRadius: 4,
                                       offset: const Offset(0, 2),
                                     ),
                                   ],
                                 ),
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Row(
                                       children: [
@@ -6154,8 +6144,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                         ),
                       ),
                       Padding(
-                        padding:
-                            EdgeInsets.fromLTRB(16, 8, 16, 16 + bottom),
+                        padding: EdgeInsets.fromLTRB(16, 8, 16, 16 + bottom),
                         child: Row(
                           children: [
                             TextButton(
@@ -6228,8 +6217,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               textDirection: TextDirection.rtl,
               child: SafeArea(
                 child: Column(
-                  mainAxisSize:
-                      sidePanel ? MainAxisSize.max : MainAxisSize.min,
+                  mainAxisSize: sidePanel ? MainAxisSize.max : MainAxisSize.min,
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
@@ -6474,7 +6462,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     return const [
       ('مصحف المدينة 1439 هـ', QpcMushafMode.qpc4Black),
       ('مصحف المدينة 1405 هـ', QpcMushafMode.qpc1),
-      ('مصحف المدينة 1439 هـ ترتيل', QpcMushafMode.qpc4),
+      ('مصحف المدينة 1439 هـ تجويد', QpcMushafMode.qpc4),
     ];
   }
 
@@ -6484,8 +6472,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     required bool isSelected,
     required VoidCallback onTap,
   }) {
-    final borderColor =
-        isSelected ? _menuPal.accent : const Color(0xFFBDBDBD);
+    final borderColor = isSelected ? _menuPal.accent : const Color(0xFFBDBDBD);
     // اسم اللون يظهر أسفل الشريحة على خلفية فاتحة، لذا نستخدم لوناً داكناً ثابتاً
     // حتى يبقى "أسود" واضحاً مثل بقية الألوان.
     final textColor = const Color(0xFF1B5E20);
@@ -6798,8 +6785,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   _mushafPreviewBox(bgColor, mode),
                   Text(
                     label,
-                    style: _menuQuranStyle(
-                        fontSize: 14, color: _menuPal.title),
+                    style: _menuQuranStyle(fontSize: 14, color: _menuPal.title),
                   ),
                 ],
               ),
@@ -6823,7 +6809,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
 
   Future<void> _showAboutDialog(BuildContext context) async {
     final pal = _menuPal;
-    String version = '2.1.18';
+    String version = '2.1.20';
     try {
       final info = await PackageInfo.fromPlatform();
       if (context.mounted) version = info.version;
@@ -6889,7 +6875,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   style: _menuQuranStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
-                  color: pal.title,
+                    color: pal.title,
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -6899,7 +6885,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   style: _menuQuranStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w500,
-                  color: pal.subtitle,
+                    color: pal.subtitle,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -7257,106 +7243,103 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 child: Column(
                   children: [
                     _buildSearchMainMenuCard(ctx, context, currentIndex,
-                                  onTap: () => _showSearchDialog(
-                                      context, _currentPageIndex)),
-                              const SizedBox(height: 6),
-                              _buildMainMenuCompactRow(
-                                ctx,
-                                context,
-                                currentIndex,
-                                items: [
-                                  _MainMenuCompactItem(
-                                    icon: Icons.list,
-                                    title: 'الفهرس',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () =>
-                                        _showFihrist(context, _currentPageIndex),
-                                  ),
-                                  _MainMenuCompactItem(
-                                    icon: Icons.menu_book,
-                                    title: 'الأجزاء',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () =>
-                                        _showAjza(context, _currentPageIndex),
-                                  ),
-                                  _MainMenuCompactItem(
-                                    icon: Icons.numbers,
-                                    title: 'الصفحات',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showPagesDialog(
-                                        context, _currentPageIndex),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              _buildMainMenuCompactRow(
-                                ctx,
-                                context,
-                                currentIndex,
-                                items: [
-                                  _MainMenuCompactItem(
-                                    icon: Icons.bookmark_border,
-                                    title: 'حفظ علامة',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showSaveBookmarkSheet(
-                                        context, _currentPageIndex),
-                                  ),
-                                  _MainMenuCompactItem(
-                                    icon: Icons.bookmark,
-                                    title: 'انتقال إلى علامة',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showGoToBookmarkSheet(
-                                        context, _currentPageIndex),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              _buildMainMenuCompactRow(
-                                ctx,
-                                context,
-                                currentIndex,
-                                items: [
-                                  _MainMenuCompactItem(
-                                    icon: Icons.auto_stories_outlined,
-                                    title: 'أذكار وأدعية',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showAzkarDialog(context),
-                                  ),
-                                  _MainMenuCompactItem(
-                                    icon: Icons.menu_book_outlined,
-                                    title: 'التفسير',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () =>
-                                        _showTafseerFromMainMenu(context),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              _buildMainMenuCompactRow(
-                                ctx,
-                                context,
-                                currentIndex,
-                                items: [
-                                  _MainMenuCompactItem(
-                                    icon: Icons.flag_outlined,
-                                    title: 'تقسيم ختمة',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showKhatmaSetupDialog(
-                                        context, _currentPageIndex),
-                                  ),
-                                  _MainMenuCompactItem(
-                                    icon: Icons.view_list_rounded,
-                                    title: 'جدول الختمة',
-                                    closeMenuBeforeAction: false,
-                                    onTap: () => _showKhatmaSchedule(context),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                            ],
-                          ),
+                        onTap: () =>
+                            _showSearchDialog(context, _currentPageIndex)),
+                    const SizedBox(height: 6),
+                    _buildMainMenuCompactRow(
+                      ctx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.list,
+                          title: 'الفهرس',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showFihrist(context, _currentPageIndex),
                         ),
-                        const SizedBox(height: 6),
+                        _MainMenuCompactItem(
+                          icon: Icons.menu_book,
+                          title: 'الأجزاء',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showAjza(context, _currentPageIndex),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.numbers,
+                          title: 'الصفحات',
+                          closeMenuBeforeAction: false,
+                          onTap: () =>
+                              _showPagesDialog(context, _currentPageIndex),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildMainMenuCompactRow(
+                      ctx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.bookmark_border,
+                          title: 'حفظ علامة',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showSaveBookmarkSheet(
+                              context, _currentPageIndex),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.bookmark,
+                          title: 'انتقال إلى علامة',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showGoToBookmarkSheet(
+                              context, _currentPageIndex),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildMainMenuCompactRow(
+                      ctx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.auto_stories_outlined,
+                          title: 'أذكار وأدعية',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showAzkarDialog(context),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.menu_book_outlined,
+                          title: 'التفسير',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showTafseerFromMainMenu(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildMainMenuCompactRow(
+                      ctx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.flag_outlined,
+                          title: 'تقسيم ختمة',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showKhatmaSetupDialog(
+                              context, _currentPageIndex),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.view_list_rounded,
+                          title: 'جدول الختمة',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showKhatmaSchedule(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
               _buildHighlightingMenuItem(
                 ctx,
                 context,
@@ -7378,8 +7361,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Column(
-              mainAxisSize:
-                  sidePanel ? MainAxisSize.max : MainAxisSize.min,
+              mainAxisSize: sidePanel ? MainAxisSize.max : MainAxisSize.min,
               children: [
                 _buildDisplayModeStrip(ctx, context),
                 Divider(height: 1, color: _menuPal.divider),
@@ -7477,8 +7459,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         decoration: BoxDecoration(
           color: pal.cardSurface,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: pal.title.withValues(alpha: 0.14)),
+          border: Border.all(color: pal.title.withValues(alpha: 0.14)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.03),
@@ -7570,9 +7551,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                           visible ? Icons.visibility : Icons.visibility_off,
                           size: 20,
                           color: enabled
-                              ? (visible
-                                  ? pal.accent
-                                  : pal.subtitle)
+                              ? (visible ? pal.accent : pal.subtitle)
                               : pal.trailingChevron,
                         ),
                         const SizedBox(height: 2),
@@ -7581,9 +7560,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                           style: _menuQuranStyle(
                             fontSize: 14,
                             color: enabled
-                                ? (visible
-                                    ? pal.accent
-                                    : pal.subtitle)
+                                ? (visible ? pal.accent : pal.subtitle)
                                 : pal.trailingChevron,
                             fontWeight: FontWeight.w600,
                           ),
@@ -7653,223 +7630,229 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                       padding: const EdgeInsets.symmetric(
                           vertical: 12, horizontal: 12),
                       itemCount: entries.length,
-                      separatorBuilder: (_, __) => Divider(height: 1, color: _menuPal.divider),
+                      separatorBuilder: (_, __) =>
+                          Divider(height: 1, color: _menuPal.divider),
                       itemBuilder: (itemCtx, i) {
                         final e = entries[i];
-                      final page = _ayahList
-                          .where((a) =>
-                              a.suraNo == e.sura && a.ayaNo == e.fromAyah)
-                          .firstOrNull
-                          ?.page;
-                      final title = '${_suraNameFromNo(e.sura)}';
-                      final rangeText = e.fromAyah == e.toAyah
-                          ? 'آية ${_toNormalDigits(e.fromAyah)}'
-                          : 'من ${_toNormalDigits(e.fromAyah)} إلى ${_toNormalDigits(e.toAyah)}';
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: e.color.withValues(alpha: 0.90),
-                          child: const Icon(Icons.highlight,
-                              color: Colors.white, size: 18),
-                        ),
-                        title: Text(
-                          title,
-                          style: _menuQuranStyle(
-                            fontSize: 16,
-                            color: _menuPal.title,
+                        final page = _ayahList
+                            .where((a) =>
+                                a.suraNo == e.sura && a.ayaNo == e.fromAyah)
+                            .firstOrNull
+                            ?.page;
+                        final title = '${_suraNameFromNo(e.sura)}';
+                        final rangeText = e.fromAyah == e.toAyah
+                            ? 'آية ${_toNormalDigits(e.fromAyah)}'
+                            : 'من ${_toNormalDigits(e.fromAyah)} إلى ${_toNormalDigits(e.toAyah)}';
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: e.color.withValues(alpha: 0.90),
+                            child: const Icon(Icons.highlight,
+                                color: Colors.white, size: 18),
                           ),
-                        ),
-                        subtitle: Text(
-                          page == null
-                              ? rangeText
-                              : '$rangeText — ص ${_toNormalDigits(page)}',
-                          style: _menuQuranStyle(
-                            fontSize: 12,
-                            color: _menuPal.subtitle,
-                            fontWeight: FontWeight.normal,
+                          title: Text(
+                            title,
+                            style: _menuQuranStyle(
+                              fontSize: 16,
+                              color: _menuPal.title,
+                            ),
                           ),
-                        ),
-                        trailing: SizedBox(
-                          width: 118,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              InkWell(
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () {
-                                  if (_isAyahHighlightingDisabledByAudio) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'التضليل متوقف أثناء الاستماع',
-                                          style: _menuQuranStyle(
-                                              fontSize: 14,
-                                              color: Colors.white),
+                          subtitle: Text(
+                            page == null
+                                ? rangeText
+                                : '$rangeText — ص ${_toNormalDigits(page)}',
+                            style: _menuQuranStyle(
+                              fontSize: 12,
+                              color: _menuPal.subtitle,
+                              fontWeight: FontWeight.normal,
+                            ),
+                          ),
+                          trailing: SizedBox(
+                            width: 118,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () {
+                                    if (_isAyahHighlightingDisabledByAudio) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'التضليل متوقف أثناء الاستماع',
+                                            style: _menuQuranStyle(
+                                                fontSize: 14,
+                                                color: Colors.white),
+                                          ),
+                                          backgroundColor:
+                                              const Color(0xFF2E7D32),
                                         ),
-                                        backgroundColor:
-                                            const Color(0xFF2E7D32),
-                                      ),
+                                      );
+                                      return;
+                                    }
+                                    Navigator.pop(ctx);
+                                    _showAyahHighlightSheet(
+                                      context,
+                                      editing: e,
                                     );
-                                    return;
-                                  }
-                                  Navigator.pop(ctx);
-                                  _showAyahHighlightSheet(
-                                    context,
-                                    editing: e,
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 4),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.edit_outlined,
-                                        size: 22,
-                                        color:
-                                            _isAyahHighlightingDisabledByAudio
-                                                ? Colors.grey
-                                                : const Color(0xFF2E7D32),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'تعديل',
-                                        style: _menuQuranStyle(
-                                          fontSize: 11,
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 4),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.edit_outlined,
+                                          size: 22,
                                           color:
                                               _isAyahHighlightingDisabledByAudio
                                                   ? Colors.grey
                                                   : const Color(0xFF2E7D32),
-                                          fontWeight: FontWeight.w600,
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              InkWell(
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () async {
-                                  final shouldDelete = await showDialog<bool>(
-                                        context: itemCtx,
-                                        builder: (dialogCtx) => Directionality(
-                                          textDirection: TextDirection.rtl,
-                                          child: AlertDialog(
-                                            title: Text(
-                                              'حذف التضليل',
-                                              style: _menuQuranStyle(
-                                                fontSize: 18,
-                                                color: const Color(0xFF1B5E20),
-                                              ),
-                                            ),
-                                            content: Text(
-                                              'هل تريد حذف هذا التضليل؟',
-                                              style: _menuQuranStyle(
-                                                fontSize: 14,
-                                                color: Colors.black87,
-                                                fontWeight: FontWeight.normal,
-                                              ),
-                                            ),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () => Navigator.pop(
-                                                    dialogCtx, false),
-                                                child: Text(
-                                                  'إلغاء',
-                                                  style: _menuQuranStyle(
-                                                    fontSize: 14,
-                                                    color: Colors.grey,
-                                                  ),
-                                                ),
-                                              ),
-                                              FilledButton(
-                                                style: FilledButton.styleFrom(
-                                                    backgroundColor:
-                                                        Colors.red),
-                                                onPressed: () => Navigator.pop(
-                                                    dialogCtx, true),
-                                                child: Text(
-                                                  'حذف',
-                                                  style: _menuQuranStyle(
-                                                    fontSize: 14,
-                                                    color: Colors.white,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'تعديل',
+                                          style: _menuQuranStyle(
+                                            fontSize: 11,
+                                            color:
+                                                _isAyahHighlightingDisabledByAudio
+                                                    ? Colors.grey
+                                                    : const Color(0xFF2E7D32),
+                                            fontWeight: FontWeight.w600,
                                           ),
                                         ),
-                                      ) ??
-                                      false;
-                                  if (!shouldDelete) return;
-                                  setState(() {
-                                    _ayahHighlights.removeWhere((h) =>
-                                        h.sura == e.sura &&
-                                        h.fromAyah == e.fromAyah &&
-                                        h.toAyah == e.toAyah &&
-                                        h.color.toARGB32() ==
-                                            e.color.toARGB32());
-                                  });
-                                  _syncAyahHighlightsStore();
-                                  await _saveBookmarks();
-                                  if (!context.mounted) return;
-                                  Navigator.pop(ctx);
-                                  _showAyahHighlightsIndex(context);
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 4),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.delete_outline,
-                                          color: Colors.red, size: 22),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'مسح',
-                                        style: _menuQuranStyle(
-                                          fontSize: 11,
-                                          color: Colors.red.shade700,
-                                          fontWeight: FontWeight.w600,
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () async {
+                                    final shouldDelete = await showDialog<bool>(
+                                          context: itemCtx,
+                                          builder: (dialogCtx) =>
+                                              Directionality(
+                                            textDirection: TextDirection.rtl,
+                                            child: AlertDialog(
+                                              title: Text(
+                                                'حذف التضليل',
+                                                style: _menuQuranStyle(
+                                                  fontSize: 18,
+                                                  color:
+                                                      const Color(0xFF1B5E20),
+                                                ),
+                                              ),
+                                              content: Text(
+                                                'هل تريد حذف هذا التضليل؟',
+                                                style: _menuQuranStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.black87,
+                                                  fontWeight: FontWeight.normal,
+                                                ),
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(
+                                                          dialogCtx, false),
+                                                  child: Text(
+                                                    'إلغاء',
+                                                    style: _menuQuranStyle(
+                                                      fontSize: 14,
+                                                      color: Colors.grey,
+                                                    ),
+                                                  ),
+                                                ),
+                                                FilledButton(
+                                                  style: FilledButton.styleFrom(
+                                                      backgroundColor:
+                                                          Colors.red),
+                                                  onPressed: () =>
+                                                      Navigator.pop(
+                                                          dialogCtx, true),
+                                                  child: Text(
+                                                    'حذف',
+                                                    style: _menuQuranStyle(
+                                                      fontSize: 14,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ) ??
+                                        false;
+                                    if (!shouldDelete) return;
+                                    setState(() {
+                                      _ayahHighlights.removeWhere((h) =>
+                                          h.sura == e.sura &&
+                                          h.fromAyah == e.fromAyah &&
+                                          h.toAyah == e.toAyah &&
+                                          h.color.toARGB32() ==
+                                              e.color.toARGB32());
+                                    });
+                                    _syncAyahHighlightsStore();
+                                    await _saveBookmarks();
+                                    if (!context.mounted) return;
+                                    Navigator.pop(ctx);
+                                    _showAyahHighlightsIndex(context);
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 4),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.delete_outline,
+                                            color: Colors.red, size: 22),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'مسح',
+                                          style: _menuQuranStyle(
+                                            fontSize: 11,
+                                            color: Colors.red.shade700,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                        onTap: () {
-                          if (page != null) {
-                            _dismissAllMenuOverlays(ctx);
-                            _navigateToPage(page);
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'تعذّر تحديد صفحة البداية لهذا التضليل',
-                                  style: _menuQuranStyle(
-                                    fontSize: 14,
-                                    color: Colors.white,
+                          onTap: () {
+                            if (page != null) {
+                              _dismissAllMenuOverlays(ctx);
+                              _navigateToPage(page);
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'تعذّر تحديد صفحة البداية لهذا التضليل',
+                                    style: _menuQuranStyle(
+                                      fontSize: 14,
+                                      color: Colors.white,
+                                    ),
                                   ),
+                                  backgroundColor: const Color(0xFF2E7D32),
                                 ),
-                                backgroundColor: const Color(0xFF2E7D32),
-                              ),
-                            );
-                          }
-                        },
-                      );
-                    },
+                              );
+                            }
+                          },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -7919,88 +7902,88 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                                 : pal.accent.withValues(alpha: 0.65),
                           ),
                           title: Text('العلامة الرئيسية', style: textStyle),
-                        subtitle: Text(
-                          _mainBookmarkPage != null
-                              ? 'ص $_mainBookmarkPage'
-                              : 'غير معينة — اضغط لتعيين الصفحة الحالية',
-                          style: subtitleStyle,
-                        ),
-                        onTap: () {
-                          setState(() => _mainBookmarkPage = currentPage);
-                          _saveBookmarks();
-                          Navigator.pop(ctx);
-                        },
-                      ),
-                      ListTile(
-                        trailing: Icon(
-                          Icons.bookmark,
-                          color: _khatmaBookmarkPage == currentPage
-                              ? _khatmaBookmarkColor
-                              : _khatmaBookmarkColor.withValues(alpha: 0.85),
-                        ),
-                        title: Text('علامة الختمة', style: textStyle),
-                        subtitle: Text(
-                          _khatmaBookmarkPage != null
-                              ? 'ص $_khatmaBookmarkPage'
-                              : 'غير معينة — اضغط لتعيين الصفحة الحالية للختمة',
-                          style: subtitleStyle,
-                        ),
-                        onTap: () {
-                          setState(() {
-                            _khatmaBookmarkPage = currentPage;
-                            // تحديث الجدول بناءً على علامة الختمة الجديدة
-                            if (_khatmaPlan.isNotEmpty) {
-                              _recalculateKhatmaPlan();
-                            }
-                          });
-                          _saveBookmarks();
-                          Navigator.pop(ctx);
-                        },
-                      ),
-                      Divider(height: 1, color: pal.divider),
-                      Text('العلامات المحفوظة',
-                          style: _menuQuranStyle(
-                              fontSize: 14,
-                              color: pal.accent,
-                              fontWeight: FontWeight.w600)),
-                      ..._savedBookmarks.map(
-                        (b) => ListTile(
-                          leading: Icon(
-                            Icons.bookmark,
-                            color: b.color,
-                            size: 26,
+                          subtitle: Text(
+                            _mainBookmarkPage != null
+                                ? 'ص $_mainBookmarkPage'
+                                : 'غير معينة — اضغط لتعيين الصفحة الحالية',
+                            style: subtitleStyle,
                           ),
-                          title:
-                              Text('${b.name} — ص ${b.page}', style: textStyle),
                           onTap: () {
-                            _dismissAllMenuOverlays(ctx);
-                            _navigateToPage(b.page);
+                            setState(() => _mainBookmarkPage = currentPage);
+                            _saveBookmarks();
+                            Navigator.pop(ctx);
                           },
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        trailing:
-                            Icon(Icons.add_circle_outline, color: pal.accent),
-                        title: Text('إضافة علامة جديدة', style: textStyle),
-                        subtitle: Text(
-                          'حفظ الصفحة الحالية (ص $currentPage) باسم',
-                          style: subtitleStyle,
+                        ListTile(
+                          trailing: Icon(
+                            Icons.bookmark,
+                            color: _khatmaBookmarkPage == currentPage
+                                ? _khatmaBookmarkColor
+                                : _khatmaBookmarkColor.withValues(alpha: 0.85),
+                          ),
+                          title: Text('علامة الختمة', style: textStyle),
+                          subtitle: Text(
+                            _khatmaBookmarkPage != null
+                                ? 'ص $_khatmaBookmarkPage'
+                                : 'غير معينة — اضغط لتعيين الصفحة الحالية للختمة',
+                            style: subtitleStyle,
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _khatmaBookmarkPage = currentPage;
+                              // تحديث الجدول بناءً على علامة الختمة الجديدة
+                              if (_khatmaPlan.isNotEmpty) {
+                                _recalculateKhatmaPlan();
+                              }
+                            });
+                            _saveBookmarks();
+                            Navigator.pop(ctx);
+                          },
                         ),
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          _showAddBookmarkDialog(context, currentPage);
-                        },
-                      ),
-                    ],
+                        Divider(height: 1, color: pal.divider),
+                        Text('العلامات المحفوظة',
+                            style: _menuQuranStyle(
+                                fontSize: 14,
+                                color: pal.accent,
+                                fontWeight: FontWeight.w600)),
+                        ..._savedBookmarks.map(
+                          (b) => ListTile(
+                            leading: Icon(
+                              Icons.bookmark,
+                              color: b.color,
+                              size: 26,
+                            ),
+                            title: Text('${b.name} — ص ${b.page}',
+                                style: textStyle),
+                            onTap: () {
+                              _dismissAllMenuOverlays(ctx);
+                              _navigateToPage(b.page);
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ListTile(
+                          trailing:
+                              Icon(Icons.add_circle_outline, color: pal.accent),
+                          title: Text('إضافة علامة جديدة', style: textStyle),
+                          subtitle: Text(
+                            'حفظ الصفحة الحالية (ص $currentPage) باسم',
+                            style: subtitleStyle,
+                          ),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _showAddBookmarkDialog(context, currentPage);
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -8061,214 +8044,218 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 ),
                 Expanded(
                   child: ListView.separated(
-                  padding: const EdgeInsets.all(8),
-                  itemCount: daysMap.length,
-                  separatorBuilder: (_, __) => Divider(height: 1, color: _menuPal.divider),
-                  itemBuilder: (_, dayIdx) {
-                    final pal = _menuPal;
-                    final day = daysMap.keys.toList()..sort();
-                    final dayNumber = day[dayIdx];
-                    final sessions = daysMap[dayNumber]!
-                      ..sort(
-                          (a, b) => a.sessionIndex.compareTo(b.sessionIndex));
-                    final isAnyCompleted = sessions.any((s) => s.completed);
-                    final allCompleted = sessions.every((s) => s.completed);
-                    final expansionBg = allCompleted
-                        ? (pal.isDark
-                            ? pal.accent.withValues(alpha: 0.28)
-                            : const Color(0xFFC8E6C9))
-                        : isAnyCompleted
-                            ? (pal.isDark
-                                ? pal.accent.withValues(alpha: 0.14)
-                                : const Color(0xFFE8F5E9))
-                            : (pal.isDark ? pal.cardSurface : Colors.white);
+                    padding: const EdgeInsets.all(8),
+                    itemCount: daysMap.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(height: 1, color: _menuPal.divider),
+                    itemBuilder: (_, dayIdx) {
+                      final pal = _menuPal;
+                      final day = daysMap.keys.toList()..sort();
+                      final dayNumber = day[dayIdx];
+                      final sessions = daysMap[dayNumber]!
+                        ..sort(
+                            (a, b) => a.sessionIndex.compareTo(b.sessionIndex));
+                      final isAnyCompleted = sessions.any((s) => s.completed);
+                      final allCompleted = sessions.every((s) => s.completed);
+                      final expansionBg = allCompleted
+                          ? (pal.isDark
+                              ? pal.accent.withValues(alpha: 0.28)
+                              : const Color(0xFFC8E6C9))
+                          : isAnyCompleted
+                              ? (pal.isDark
+                                  ? pal.accent.withValues(alpha: 0.14)
+                                  : const Color(0xFFE8F5E9))
+                              : (pal.isDark ? pal.cardSurface : Colors.white);
 
-                    return ExpansionTile(
-                      initiallyExpanded: dayIdx == 0,
-                      backgroundColor: expansionBg,
-                      collapsedBackgroundColor: expansionBg,
-                      title: Row(
-                        children: [
-                          Text(
-                            'اليوم ${dayNumber + 1}',
-                            style: _menuQuranStyle(
-                                fontSize: 18,
-                                color: pal.title,
-                                fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(width: 8),
-                          if (allCompleted)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: pal.accent,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                'مكتمل',
-                                style: _menuQuranStyle(
-                                    fontSize: 12,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                        ],
-                      ),
-                      children: sessions.map((session) {
-                        final len = session.endPage - session.startPage + 1;
-                        final bookmark = _khatmaBookmarkPage;
-                        double progress;
-                        if (session.completed) {
-                          progress = 1.0;
-                        } else if (bookmark == null) {
-                          progress = 0.0;
-                        } else if (bookmark <= session.startPage) {
-                          progress = 0.0;
-                        } else if (bookmark > session.endPage) {
-                          progress = 1.0;
-                        } else {
-                          // علامة الختمة تشير عادةً للصفحة التالية بعد آخر صفحة تمت قراءتها.
-                          final readPages =
-                              (bookmark - session.startPage).clamp(0, len);
-                          progress = len > 0 ? (readPages / len) : 0.0;
-                        }
-
-                        return Column(
+                      return ExpansionTile(
+                        initiallyExpanded: dayIdx == 0,
+                        backgroundColor: expansionBg,
+                        collapsedBackgroundColor: expansionBg,
+                        title: Row(
                           children: [
-                            ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: session.completed
-                                      ? pal.accent
-                                      : pal.subtitle.withValues(alpha: 0.35),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: session.completed
-                                      ? const Icon(Icons.check,
-                                          color: Colors.white, size: 20)
-                                      : Text(
-                                          '${session.sessionIndex + 1}',
-                                          style: _menuQuranStyle(
-                                              fontSize: 14,
-                                              color: pal.title,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                ),
-                              ),
-                              title: Text(
-                                session.timeOfDay,
-                                style: _menuQuranStyle(
-                                    fontSize: 16,
-                                    color: pal.title,
-                                    fontWeight: FontWeight.w600),
-                              ),
-                              subtitle: Text(
-                                'صفحات ${session.startPage} - ${session.endPage} '
-                                '($len صفحة)',
-                                style: _menuQuranStyle(
-                                    fontSize: 13,
-                                    color: pal.subtitle,
-                                    fontWeight: FontWeight.normal),
-                              ),
-                              trailing: session.completed
-                                  ? Icon(Icons.check_circle, color: pal.accent)
-                                  : IconButton(
-                                      icon: Icon(
-                                          Icons.radio_button_unchecked,
-                                          color: pal.trailingChevron),
-                                      onPressed: () {
-                                        // تحديث حالة الجلسة كمكتملة
-                                        setState(() {
-                                          final idx = _khatmaPlan.indexWhere(
-                                              (s) =>
-                                                  s.globalIndex ==
-                                                  session.globalIndex);
-                                          if (idx != -1) {
-                                            _khatmaPlan[idx] = (
-                                              dayIndex: session.dayIndex,
-                                              sessionIndex:
-                                                  session.sessionIndex,
-                                              globalIndex: session.globalIndex,
-                                              startPage: session.startPage,
-                                              endPage: session.endPage,
-                                              timeOfDay: session.timeOfDay,
-                                              completed: true,
-                                            );
-                                            // تحديث علامة الختمة إلى نهاية هذه الجلسة
-                                            _khatmaBookmarkPage =
-                                                session.endPage + 1;
-                                            if (_khatmaBookmarkPage! >
-                                                totalPages) {
-                                              _khatmaBookmarkPage = totalPages;
-                                            }
-                                            _saveBookmarks();
-                                            // إعادة حساب الجدول
-                                            _recalculateKhatmaPlan();
-                                            _saveBookmarks();
-                                          }
-                                        });
-                                        Navigator.pop(ctx);
-                                        _showKhatmaSchedule(context);
-                                      },
-                                    ),
-                              onTap: () {
-                                // الانتقال إلى صفحة بداية الجلسة
-                                Navigator.pop(ctx);
-                                _navigateToPage(session.startPage);
-                              },
+                            Text(
+                              'اليوم ${dayNumber + 1}',
+                              style: _menuQuranStyle(
+                                  fontSize: 18,
+                                  color: pal.title,
+                                  fontWeight: FontWeight.bold),
                             ),
-                            Padding(
-                              padding: const EdgeInsetsDirectional.only(
-                                  start: 72, end: 16, bottom: 8),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(999),
-                                      child: LinearProgressIndicator(
-                                        minHeight: 4,
-                                        value: progress.clamp(0.0, 1.0),
-                                        backgroundColor: pal.subtitle
-                                            .withValues(alpha: 0.22),
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                          session.completed
-                                              ? pal.accent
-                                              : const Color(0xFF1E88E5),
+                            const SizedBox(width: 8),
+                            if (allCompleted)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: pal.accent,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'مكتمل',
+                                  style: _menuQuranStyle(
+                                      fontSize: 12,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                          ],
+                        ),
+                        children: sessions.map((session) {
+                          final len = session.endPage - session.startPage + 1;
+                          final bookmark = _khatmaBookmarkPage;
+                          double progress;
+                          if (session.completed) {
+                            progress = 1.0;
+                          } else if (bookmark == null) {
+                            progress = 0.0;
+                          } else if (bookmark <= session.startPage) {
+                            progress = 0.0;
+                          } else if (bookmark > session.endPage) {
+                            progress = 1.0;
+                          } else {
+                            // علامة الختمة تشير عادةً للصفحة التالية بعد آخر صفحة تمت قراءتها.
+                            final readPages =
+                                (bookmark - session.startPage).clamp(0, len);
+                            progress = len > 0 ? (readPages / len) : 0.0;
+                          }
+
+                          return Column(
+                            children: [
+                              ListTile(
+                                dense: true,
+                                leading: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: session.completed
+                                        ? pal.accent
+                                        : pal.subtitle.withValues(alpha: 0.35),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Center(
+                                    child: session.completed
+                                        ? const Icon(Icons.check,
+                                            color: Colors.white, size: 20)
+                                        : Text(
+                                            '${session.sessionIndex + 1}',
+                                            style: _menuQuranStyle(
+                                                fontSize: 14,
+                                                color: pal.title,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                  ),
+                                ),
+                                title: Text(
+                                  session.timeOfDay,
+                                  style: _menuQuranStyle(
+                                      fontSize: 16,
+                                      color: pal.title,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(
+                                  'صفحات ${session.startPage} - ${session.endPage} '
+                                  '($len صفحة)',
+                                  style: _menuQuranStyle(
+                                      fontSize: 13,
+                                      color: pal.subtitle,
+                                      fontWeight: FontWeight.normal),
+                                ),
+                                trailing: session.completed
+                                    ? Icon(Icons.check_circle,
+                                        color: pal.accent)
+                                    : IconButton(
+                                        icon: Icon(Icons.radio_button_unchecked,
+                                            color: pal.trailingChevron),
+                                        onPressed: () {
+                                          // تحديث حالة الجلسة كمكتملة
+                                          setState(() {
+                                            final idx = _khatmaPlan.indexWhere(
+                                                (s) =>
+                                                    s.globalIndex ==
+                                                    session.globalIndex);
+                                            if (idx != -1) {
+                                              _khatmaPlan[idx] = (
+                                                dayIndex: session.dayIndex,
+                                                sessionIndex:
+                                                    session.sessionIndex,
+                                                globalIndex:
+                                                    session.globalIndex,
+                                                startPage: session.startPage,
+                                                endPage: session.endPage,
+                                                timeOfDay: session.timeOfDay,
+                                                completed: true,
+                                              );
+                                              // تحديث علامة الختمة إلى نهاية هذه الجلسة
+                                              _khatmaBookmarkPage =
+                                                  session.endPage + 1;
+                                              if (_khatmaBookmarkPage! >
+                                                  totalPages) {
+                                                _khatmaBookmarkPage =
+                                                    totalPages;
+                                              }
+                                              _saveBookmarks();
+                                              // إعادة حساب الجدول
+                                              _recalculateKhatmaPlan();
+                                              _saveBookmarks();
+                                            }
+                                          });
+                                          Navigator.pop(ctx);
+                                          _showKhatmaSchedule(context);
+                                        },
+                                      ),
+                                onTap: () {
+                                  // الانتقال إلى صفحة بداية الجلسة
+                                  Navigator.pop(ctx);
+                                  _navigateToPage(session.startPage);
+                                },
+                              ),
+                              Padding(
+                                padding: const EdgeInsetsDirectional.only(
+                                    start: 72, end: 16, bottom: 8),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                        child: LinearProgressIndicator(
+                                          minHeight: 4,
+                                          value: progress.clamp(0.0, 1.0),
+                                          backgroundColor: pal.subtitle
+                                              .withValues(alpha: 0.22),
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                            session.completed
+                                                ? pal.accent
+                                                : const Color(0xFF1E88E5),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(
-                                    '${_toNormalDigits((progress * 100).round().clamp(0, 100))}%',
-                                    textDirection: TextDirection.ltr,
-                                    style: _menuQuranStyle(
-                                      fontSize: 12,
-                                      color: pal.subtitle,
-                                      fontWeight: FontWeight.w600,
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      '${_toNormalDigits((progress * 100).round().clamp(0, 100))}%',
+                                      textDirection: TextDirection.ltr,
+                                      style: _menuQuranStyle(
+                                        fontSize: 12,
+                                        color: pal.subtitle,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    );
-                  },
+                            ],
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -8301,8 +8288,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 backgroundColor: pal.surface,
                 surfaceTintColor: Colors.transparent,
                 title: Text('إضافة علامة جديدة',
-                    style: _menuQuranStyle(
-                        fontSize: 18, color: pal.title)),
+                    style: _menuQuranStyle(fontSize: 18, color: pal.title)),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -8343,9 +8329,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
                                 border: Border.all(
-                                  color: selected == c
-                                      ? pal.accent
-                                      : pal.divider,
+                                  color:
+                                      selected == c ? pal.accent : pal.divider,
                                   width: selected == c ? 2 : 1,
                                 ),
                                 borderRadius: BorderRadius.circular(8),
@@ -8361,12 +8346,11 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
                     child: Text('إلغاء',
-                        style: _menuQuranStyle(
-                            fontSize: 14, color: pal.accent)),
+                        style:
+                            _menuQuranStyle(fontSize: 14, color: pal.accent)),
                   ),
                   FilledButton(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: pal.accent),
+                    style: FilledButton.styleFrom(backgroundColor: pal.accent),
                     onPressed: () {
                       final name = nameController.text.trim().isEmpty
                           ? 'علامة ص $currentPage'
@@ -8381,8 +8365,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                       Navigator.pop(ctx);
                     },
                     child: Text('حفظ',
-                        style: _menuQuranStyle(
-                            fontSize: 14, color: Colors.white)),
+                        style:
+                            _menuQuranStyle(fontSize: 14, color: Colors.white)),
                   ),
                 ],
               ),
@@ -8423,8 +8407,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 titlePadding: EdgeInsets.zero,
                 title: _NestedMenuAppBar(
                   title: 'تقسيم ختمة',
-                  titleStyle: _menuQuranStyle(
-                      fontSize: 18, color: pal.title),
+                  titleStyle: _menuQuranStyle(fontSize: 18, color: pal.title),
                   onBack: () {
                     disposeKhatmaFields();
                     Navigator.pop(ctx);
@@ -8447,148 +8430,148 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                             color: pal.subtitle,
                             fontWeight: FontWeight.normal),
                       ),
-                  const SizedBox(height: 12),
-                  Text('عدد الأيام للختمة',
-                      style: _menuQuranStyle(
-                          fontSize: 14,
-                          color: pal.title,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  TextField(
-                    controller: daysController,
-                    keyboardType: TextInputType.number,
-                    decoration: _menuDialogInputDecoration(pal),
-                    style: _menuQuranStyle(
-                        fontSize: 16, color: pal.searchFieldText),
-                    onChanged: (_) => setDialogState(() {}),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('عدد القراءات في اليوم',
-                      style: _menuQuranStyle(
-                          fontSize: 14,
-                          color: pal.title,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  TextField(
-                    controller: sessionsController,
-                    keyboardType: TextInputType.number,
-                    decoration: _menuDialogInputDecoration(pal),
-                    style: _menuQuranStyle(
-                        fontSize: 16, color: pal.searchFieldText),
-                    onChanged: (value) {
-                      final count = int.tryParse(value) ?? 1;
-                      while (sessionTimeControllers.length < count) {
-                        sessionTimeControllers.add(TextEditingController(
-                            text:
-                                'القراءة ${sessionTimeControllers.length + 1}'));
-                      }
-                      while (sessionTimeControllers.length > count) {
-                        sessionTimeControllers.removeLast().dispose();
-                      }
-                      setDialogState(() {});
-                    },
-                  ),
-                  if (int.tryParse(sessionsController.text) != null &&
-                      int.parse(sessionsController.text) > 0) ...[
-                    const SizedBox(height: 12),
-                    Text('أوقات القراءات',
-                        style: _menuQuranStyle(
-                            fontSize: 14,
-                            color: pal.title,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    ...List.generate(
-                      int.tryParse(sessionsController.text) ?? 1,
-                      (i) {
-                        if (i >= sessionTimeControllers.length) {
-                          sessionTimeControllers.add(
-                              TextEditingController(text: 'القراءة ${i + 1}'));
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: TextField(
-                            controller: sessionTimeControllers[i],
-                            decoration: _menuDialogInputDecoration(
-                              pal,
-                              labelText: 'وقت القراءة ${i + 1}',
-                              hintText: 'مثال: الفجر، الظهر، العصر...',
-                            ),
-                            style: _menuQuranStyle(
-                                fontSize: 16, color: pal.searchFieldText),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  for (var c in sessionTimeControllers) {
-                    c.dispose();
-                  }
-                  Navigator.pop(ctx);
-                },
-                child: Text('إلغاء',
-                    style: _menuQuranStyle(
-                        fontSize: 14, color: pal.accent)),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(
-                    backgroundColor: pal.accent),
-                onPressed: () {
-                  final days = int.tryParse(daysController.text);
-                  final sessions = int.tryParse(sessionsController.text);
-                  if (days == null ||
-                      days < 1 ||
-                      sessions == null ||
-                      sessions < 1) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'يرجى إدخال أرقام صحيحة',
+                      const SizedBox(height: 12),
+                      Text('عدد الأيام للختمة',
                           style: _menuQuranStyle(
                               fontSize: 14,
-                              color: Colors.white,
-                              fontWeight: FontWeight.normal),
-                        ),
+                              color: pal.title,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: daysController,
+                        keyboardType: TextInputType.number,
+                        decoration: _menuDialogInputDecoration(pal),
+                        style: _menuQuranStyle(
+                            fontSize: 16, color: pal.searchFieldText),
+                        onChanged: (_) => setDialogState(() {}),
                       ),
-                    );
-                    return;
-                  }
+                      const SizedBox(height: 8),
+                      Text('عدد القراءات في اليوم',
+                          style: _menuQuranStyle(
+                              fontSize: 14,
+                              color: pal.title,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: sessionsController,
+                        keyboardType: TextInputType.number,
+                        decoration: _menuDialogInputDecoration(pal),
+                        style: _menuQuranStyle(
+                            fontSize: 16, color: pal.searchFieldText),
+                        onChanged: (value) {
+                          final count = int.tryParse(value) ?? 1;
+                          while (sessionTimeControllers.length < count) {
+                            sessionTimeControllers.add(TextEditingController(
+                                text:
+                                    'القراءة ${sessionTimeControllers.length + 1}'));
+                          }
+                          while (sessionTimeControllers.length > count) {
+                            sessionTimeControllers.removeLast().dispose();
+                          }
+                          setDialogState(() {});
+                        },
+                      ),
+                      if (int.tryParse(sessionsController.text) != null &&
+                          int.parse(sessionsController.text) > 0) ...[
+                        const SizedBox(height: 12),
+                        Text('أوقات القراءات',
+                            style: _menuQuranStyle(
+                                fontSize: 14,
+                                color: pal.title,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        ...List.generate(
+                          int.tryParse(sessionsController.text) ?? 1,
+                          (i) {
+                            if (i >= sessionTimeControllers.length) {
+                              sessionTimeControllers.add(TextEditingController(
+                                  text: 'القراءة ${i + 1}'));
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: TextField(
+                                controller: sessionTimeControllers[i],
+                                decoration: _menuDialogInputDecoration(
+                                  pal,
+                                  labelText: 'وقت القراءة ${i + 1}',
+                                  hintText: 'مثال: الفجر، الظهر، العصر...',
+                                ),
+                                style: _menuQuranStyle(
+                                    fontSize: 16, color: pal.searchFieldText),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      for (var c in sessionTimeControllers) {
+                        c.dispose();
+                      }
+                      Navigator.pop(ctx);
+                    },
+                    child: Text('إلغاء',
+                        style:
+                            _menuQuranStyle(fontSize: 14, color: pal.accent)),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: pal.accent),
+                    onPressed: () {
+                      final days = int.tryParse(daysController.text);
+                      final sessions = int.tryParse(sessionsController.text);
+                      if (days == null ||
+                          days < 1 ||
+                          sessions == null ||
+                          sessions < 1) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'يرجى إدخال أرقام صحيحة',
+                              style: _menuQuranStyle(
+                                  fontSize: 14,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.normal),
+                            ),
+                          ),
+                        );
+                        return;
+                      }
 
-                  final sessionTimes = sessionTimeControllers
-                      .map((c) => c.text.trim().isEmpty
-                          ? 'القراءة ${sessionTimeControllers.indexOf(c) + 1}'
-                          : c.text.trim())
-                      .toList();
+                      final sessionTimes = sessionTimeControllers
+                          .map((c) => c.text.trim().isEmpty
+                              ? 'القراءة ${sessionTimeControllers.indexOf(c) + 1}'
+                              : c.text.trim())
+                          .toList();
 
-                  // حساب خطة الختمة (دائماً من الصفحة الأولى)
-                  _calculateKhatmaPlan(
-                    startPage: 1,
-                    days: days,
-                    sessionsPerDay: sessions,
-                    sessionTimes: sessionTimes,
-                  );
+                      // حساب خطة الختمة (دائماً من الصفحة الأولى)
+                      _calculateKhatmaPlan(
+                        startPage: 1,
+                        days: days,
+                        sessionsPerDay: sessions,
+                        sessionTimes: sessionTimes,
+                      );
 
-                  // تعيين علامة الختمة
-                  setState(() => _khatmaBookmarkPage = currentPage);
-                  _saveBookmarks();
+                      // تعيين علامة الختمة
+                      setState(() => _khatmaBookmarkPage = currentPage);
+                      _saveBookmarks();
 
-                  for (var c in sessionTimeControllers) {
-                    c.dispose();
-                  }
-                  Navigator.pop(ctx);
+                      for (var c in sessionTimeControllers) {
+                        c.dispose();
+                      }
+                      Navigator.pop(ctx);
 
-                  // عرض جدول الختمة
-                  _showKhatmaSchedule(context);
-                },
-                child: Text('حفظ وإنشاء الجدول',
-                    style: _menuQuranStyle(fontSize: 14, color: Colors.white)),
-              ),
-            ],
+                      // عرض جدول الختمة
+                      _showKhatmaSchedule(context);
+                    },
+                    child: Text('حفظ وإنشاء الجدول',
+                        style:
+                            _menuQuranStyle(fontSize: 14, color: Colors.white)),
+                  ),
+                ],
               ),
             ),
           );
@@ -8629,133 +8612,135 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     Divider(height: 1, color: pal.divider),
                     Expanded(
                       child: ListView(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 16, horizontal: 12),
-                      children: [
-                        const SizedBox(height: 12),
-                        if (_mainBookmarkPage != null)
-                          ListTile(
-                            trailing: Icon(Icons.bookmark,
-                                color: pal.accent, size: 22),
-                            title: Text(
-                                'العلامة الرئيسية — ص $_mainBookmarkPage',
-                                style: textStyle),
-                            onTap: () {
-                              _dismissAllMenuOverlays(ctx);
-                              _navigateToPage(_mainBookmarkPage!);
-                            },
-                          ),
-                        if (_khatmaBookmarkPage != null)
-                          ListTile(
-                            trailing: const Icon(Icons.bookmark,
-                                color: Color(0xFF1565C0), size: 22),
-                            title: Text('علامة الختمة — ص $_khatmaBookmarkPage',
-                                style: textStyle),
-                            onTap: () {
-                              _dismissAllMenuOverlays(ctx);
-                              _navigateToPage(_khatmaBookmarkPage!);
-                            },
-                          ),
-                        ..._savedBookmarks.asMap().entries.map((entry) {
-                          final index = entry.key;
-                          final b = entry.value;
-                          return ListTile(
-                            leading: Icon(
-                              Icons.bookmark,
-                              color: b.color,
-                              size: 26,
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  color: Colors.red, size: 22),
-                              onPressed: () async {
-                                final confirm = await showDialog<bool>(
-                                  context: context,
-                                  builder: (dialogContext) => Directionality(
-                                    textDirection: TextDirection.rtl,
-                                    child: AlertDialog(
-                                      title: Text('تأكيد الحذف',
-                                          style: _menuQuranStyle(
-                                              fontSize: 18,
-                                              color: pal.title)),
-                                      content: Text(
-                                          'هل متأكد من حذف علامة (${b.name})؟',
-                                          style: _menuQuranStyle(
-                                              fontSize: 14,
-                                              color: pal.subtitle,
-                                              fontWeight: FontWeight.normal)),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(
-                                              dialogContext, false),
-                                          child: Text('إلغاء',
-                                              style: _menuQuranStyle(
-                                                  fontSize: 14,
-                                                  color: pal.subtitle)),
-                                        ),
-                                        FilledButton(
-                                          style: FilledButton.styleFrom(
-                                              backgroundColor: pal.accent),
-                                          onPressed: () => Navigator.pop(
-                                              dialogContext, true),
-                                          child: Text('نعم',
-                                              style: _menuQuranStyle(
-                                                  fontSize: 14,
-                                                  color: Colors.white)),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                                if (confirm == true && mounted) {
-                                  setState(() {
-                                    final updated = List<
-                                        ({
-                                          String name,
-                                          int page,
-                                          Color color
-                                        })>.from(_savedBookmarks);
-                                    if (index >= 0 && index < updated.length) {
-                                      updated.removeAt(index);
-                                    }
-                                    _savedBookmarks = updated;
-                                  });
-                                  setModalState(() {});
-                                  _saveBookmarks();
-                                }
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16, horizontal: 12),
+                        children: [
+                          const SizedBox(height: 12),
+                          if (_mainBookmarkPage != null)
+                            ListTile(
+                              trailing: Icon(Icons.bookmark,
+                                  color: pal.accent, size: 22),
+                              title: Text(
+                                  'العلامة الرئيسية — ص $_mainBookmarkPage',
+                                  style: textStyle),
+                              onTap: () {
+                                _dismissAllMenuOverlays(ctx);
+                                _navigateToPage(_mainBookmarkPage!);
                               },
                             ),
-                            title: Text('${b.name} — ص ${b.page}',
-                                style: textStyle),
-                            onTap: () {
-                              _dismissAllMenuOverlays(ctx);
-                              _navigateToPage(b.page);
-                            },
-                          );
-                        }),
-                        if (_mainBookmarkPage == null &&
-                            _savedBookmarks.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              'لا توجد علامات محفوظة. استخدم "حفظ علامة" أولاً.',
-                              style: _menuQuranStyle(
-                                  fontSize: 14,
-                                  color: pal.subtitle,
-                                  fontWeight: FontWeight.normal),
-                              textAlign: TextAlign.center,
+                          if (_khatmaBookmarkPage != null)
+                            ListTile(
+                              trailing: const Icon(Icons.bookmark,
+                                  color: Color(0xFF1565C0), size: 22),
+                              title: Text(
+                                  'علامة الختمة — ص $_khatmaBookmarkPage',
+                                  style: textStyle),
+                              onTap: () {
+                                _dismissAllMenuOverlays(ctx);
+                                _navigateToPage(_khatmaBookmarkPage!);
+                              },
                             ),
-                          ),
-                      ],
+                          ..._savedBookmarks.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final b = entry.value;
+                            return ListTile(
+                              leading: Icon(
+                                Icons.bookmark,
+                                color: b.color,
+                                size: 26,
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    color: Colors.red, size: 22),
+                                onPressed: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (dialogContext) => Directionality(
+                                      textDirection: TextDirection.rtl,
+                                      child: AlertDialog(
+                                        title: Text('تأكيد الحذف',
+                                            style: _menuQuranStyle(
+                                                fontSize: 18,
+                                                color: pal.title)),
+                                        content: Text(
+                                            'هل متأكد من حذف علامة (${b.name})؟',
+                                            style: _menuQuranStyle(
+                                                fontSize: 14,
+                                                color: pal.subtitle,
+                                                fontWeight: FontWeight.normal)),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(
+                                                dialogContext, false),
+                                            child: Text('إلغاء',
+                                                style: _menuQuranStyle(
+                                                    fontSize: 14,
+                                                    color: pal.subtitle)),
+                                          ),
+                                          FilledButton(
+                                            style: FilledButton.styleFrom(
+                                                backgroundColor: pal.accent),
+                                            onPressed: () => Navigator.pop(
+                                                dialogContext, true),
+                                            child: Text('نعم',
+                                                style: _menuQuranStyle(
+                                                    fontSize: 14,
+                                                    color: Colors.white)),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                  if (confirm == true && mounted) {
+                                    setState(() {
+                                      final updated = List<
+                                          ({
+                                            String name,
+                                            int page,
+                                            Color color
+                                          })>.from(_savedBookmarks);
+                                      if (index >= 0 &&
+                                          index < updated.length) {
+                                        updated.removeAt(index);
+                                      }
+                                      _savedBookmarks = updated;
+                                    });
+                                    setModalState(() {});
+                                    _saveBookmarks();
+                                  }
+                                },
+                              ),
+                              title: Text('${b.name} — ص ${b.page}',
+                                  style: textStyle),
+                              onTap: () {
+                                _dismissAllMenuOverlays(ctx);
+                                _navigateToPage(b.page);
+                              },
+                            );
+                          }),
+                          if (_mainBookmarkPage == null &&
+                              _savedBookmarks.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                'لا توجد علامات محفوظة. استخدم "حفظ علامة" أولاً.',
+                                style: _menuQuranStyle(
+                                    fontSize: 14,
+                                    color: pal.subtitle,
+                                    fontWeight: FontWeight.normal),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -8798,8 +8783,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             titlePadding: EdgeInsets.zero,
             title: _NestedMenuAppBar(
               title: 'بحث في الآيات',
-              titleStyle: _menuQuranStyle(
-                  fontSize: 20, color: const Color(0xFF1B5E20)),
+              titleStyle:
+                  _menuQuranStyle(fontSize: 20, color: const Color(0xFF1B5E20)),
               onBack: () {
                 FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.of(ctx).maybePop();
@@ -8945,8 +8930,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               children: [
                 _NestedMenuAppBar(
                   title: 'الفهرس',
-                  titleStyle: _menuQuranStyle(
-                      fontSize: 20, color: _menuPal.title),
+                  titleStyle:
+                      _menuQuranStyle(fontSize: 20, color: _menuPal.title),
                   onBack: () => Navigator.pop(ctx),
                   onDismissAll: () => _dismissAllMenuOverlays(ctx),
                 ),
@@ -8964,122 +8949,123 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                         color: _menuPal.divider,
                       ),
                       itemBuilder: (_, i) {
-                      final s = _suraList[i];
-                      final pageIndex = s.startPage - 1;
-                      final suraNo = s.no;
-                      final ayatCount = _suraAyahCount[suraNo] ?? 0;
-                      final isMadani = _madaniSuras.contains(suraNo);
-                      final isCurrentSuraRow = i == targetListIndex;
-                      final pal = _menuPal;
-                      return InkWell(
-                        key: isCurrentSuraRow ? _fihristCurrentSuraKey : null,
-                        onTap: () {
-                          _dismissAllMenuOverlays(ctx);
-                          _navigateToPage(pageIndex + 1);
-                        },
-                        child: DecoratedBox(
-                          decoration: isCurrentSuraRow
-                              ? BoxDecoration(
-                                  color: pal.accent.withValues(
-                                      alpha: pal.isDark ? 0.22 : 0.10),
-                                  borderRadius: BorderRadius.circular(10),
-                                )
-                              : const BoxDecoration(),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 32,
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Text(
-                                      '$suraNo',
-                                      style: _menuQuranStyle(
-                                          fontSize: 16,
-                                          color: pal.accent,
-                                          fontWeight: FontWeight.w700),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    s.nameAr,
-                                    style: _menuQuranStyle(
-                                        fontSize: 18,
-                                        color: pal.title,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                SizedBox(
-                                  width: 80,
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Text(
-                                      'آيَاتُها $ayatCount',
-                                      style: _menuQuranStyle(
-                                          fontSize: 14,
-                                          color: pal.subtitle,
-                                          fontWeight: FontWeight.w500),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 2),
-                                SizedBox(
-                                  width: 70,
-                                  child: Center(
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: isMadani
-                                            ? const Color.fromARGB(
-                                                255, 50, 168, 56)
-                                            : const Color.fromARGB(
-                                                255, 23, 112, 153),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
+                        final s = _suraList[i];
+                        final pageIndex = s.startPage - 1;
+                        final suraNo = s.no;
+                        final ayatCount = _suraAyahCount[suraNo] ?? 0;
+                        final isMadani = _madaniSuras.contains(suraNo);
+                        final isCurrentSuraRow = i == targetListIndex;
+                        final pal = _menuPal;
+                        return InkWell(
+                          key: isCurrentSuraRow ? _fihristCurrentSuraKey : null,
+                          onTap: () {
+                            _dismissAllMenuOverlays(ctx);
+                            _navigateToPage(pageIndex + 1);
+                          },
+                          child: DecoratedBox(
+                            decoration: isCurrentSuraRow
+                                ? BoxDecoration(
+                                    color: pal.accent.withValues(
+                                        alpha: pal.isDark ? 0.22 : 0.10),
+                                    borderRadius: BorderRadius.circular(10),
+                                  )
+                                : const BoxDecoration(),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 32,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
                                       child: Text(
-                                        isMadani ? 'مدنية' : 'مكية',
+                                        '$suraNo',
                                         style: _menuQuranStyle(
-                                            fontSize: 13,
-                                            color: Colors.white,
+                                            fontSize: 16,
+                                            color: pal.accent,
                                             fontWeight: FontWeight.w700),
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: 56,
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
+                                  const SizedBox(width: 8),
+                                  Expanded(
                                     child: Text(
-                                      'ص ${s.startPage}',
+                                      s.nameAr,
                                       style: _menuQuranStyle(
-                                          fontSize: 15,
-                                          color: pal.accent,
+                                          fontSize: 18,
+                                          color: pal.title,
                                           fontWeight: FontWeight.w700),
                                     ),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 10),
+                                  SizedBox(
+                                    width: 80,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        'آيَاتُها $ayatCount',
+                                        style: _menuQuranStyle(
+                                            fontSize: 14,
+                                            color: pal.subtitle,
+                                            fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 2),
+                                  SizedBox(
+                                    width: 70,
+                                    child: Center(
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: isMadani
+                                              ? const Color.fromARGB(
+                                                  255, 50, 168, 56)
+                                              : const Color.fromARGB(
+                                                  255, 23, 112, 153),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          isMadani ? 'مدنية' : 'مكية',
+                                          style: _menuQuranStyle(
+                                              fontSize: 13,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: 56,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        'ص ${s.startPage}',
+                                        style: _menuQuranStyle(
+                                            fontSize: 15,
+                                            color: pal.accent,
+                                            fontWeight: FontWeight.w700),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -9103,8 +9089,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               children: [
                 _NestedMenuAppBar(
                   title: 'الأجزاء',
-                  titleStyle: _menuQuranStyle(
-                      fontSize: 20, color: _menuPal.title),
+                  titleStyle:
+                      _menuQuranStyle(fontSize: 20, color: _menuPal.title),
                   onBack: () => Navigator.pop(ctx),
                   onDismissAll: () => _dismissAllMenuOverlays(ctx),
                 ),
@@ -9119,59 +9105,59 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     ),
                     itemBuilder: (_, i) {
                       final juz = i + 1;
-                    final startPage = _juzStartPage[juz] ?? 1;
-                    final pageIndex = startPage - 1;
-                    final pal = _menuPal;
-                    return InkWell(
-                      onTap: () {
-                        _dismissAllMenuOverlays(ctx);
-                        _navigateToPage(pageIndex + 1);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 60,
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(
-                                  _toNormalDigits(juz),
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    color: pal.accent,
-                                    fontWeight: FontWeight.w700,
+                      final startPage = _juzStartPage[juz] ?? 1;
+                      final pageIndex = startPage - 1;
+                      final pal = _menuPal;
+                      return InkWell(
+                        onTap: () {
+                          _dismissAllMenuOverlays(ctx);
+                          _navigateToPage(pageIndex + 1);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 60,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    _toNormalDigits(juz),
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      color: pal.accent,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text('الجزء ${_juzNames[i]}',
-                                  style: _menuQuranStyle(
-                                      fontSize: 18,
-                                      color: pal.title,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                            const SizedBox(width: 10),
-                            Text('ص ${_toNormalDigits(startPage)}',
-                                style: TextStyle(
-                                    fontSize: 15,
-                                    color: pal.accent,
-                                    fontWeight: FontWeight.w700)),
-                          ],
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text('الجزء ${_juzNames[i]}',
+                                    style: _menuQuranStyle(
+                                        fontSize: 18,
+                                        color: pal.title,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                              const SizedBox(width: 10),
+                              Text('ص ${_toNormalDigits(startPage)}',
+                                  style: TextStyle(
+                                      fontSize: 15,
+                                      color: pal.accent,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -9240,9 +9226,8 @@ class _FihristScrollOnOpenState extends State<_FihristScrollOnOpen> {
     final vh = pos.viewportDimension;
     final max = pos.maxScrollExtent;
     final i = widget.targetListIndex;
-    final raw = alignTop
-        ? i * _rowExtent
-        : i * _rowExtent - vh / 2 + _rowExtent / 2;
+    final raw =
+        alignTop ? i * _rowExtent : i * _rowExtent - vh / 2 + _rowExtent / 2;
     sc.jumpTo(raw.clamp(0.0, max));
   }
 
@@ -9476,164 +9461,164 @@ class _PageNumberPickerSheetState extends State<_PageNumberPickerSheet> {
         child: Directionality(
           textDirection: TextDirection.rtl,
           child: Padding(
-          padding: EdgeInsets.only(
-            left: 12,
-            right: 12,
-            bottom: MediaQuery.viewInsetsOf(context).bottom + 12,
-          ),
-          child: Material(
-            color: pal.surface,
-            borderRadius: BorderRadius.circular(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: pal.surface,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(16)),
+            padding: EdgeInsets.only(
+              left: 12,
+              right: 12,
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 12,
+            ),
+            child: Material(
+              color: pal.surface,
+              borderRadius: BorderRadius.circular(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: pal.surface,
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(16)),
+                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                    child: _NestedMenuAppBar(
+                      title: 'انتقال إلى صفحة',
+                      titleStyle: widget.titleStyle,
+                      onBack: () => Navigator.pop(context),
+                      onDismissAll: widget.onDismissAll,
+                    ),
                   ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  child: _NestedMenuAppBar(
-                    title: 'انتقال إلى صفحة',
-                    titleStyle: widget.titleStyle,
-                    onBack: () => Navigator.pop(context),
-                    onDismissAll: widget.onDismissAll,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'الصفحة: ${widget.toNormalDigits(_page)}',
-                        style: TextStyle(
-                          fontFamily: widget.arabicFontFamily,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: pal.title,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'الصفحة: ${widget.toNormalDigits(_page)}',
+                          style: TextStyle(
+                            fontFamily: widget.arabicFontFamily,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: pal.title,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        height: _wheelHeight,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final w = (constraints.maxWidth - 16) / 3;
-                            final wheelW = w.clamp(56.0, _wheelMaxWidth);
-                            return Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                SizedBox(
-                                  width: wheelW,
-                                  height: _wheelHeight,
-                                  child: _buildWheelColumn(
-                                    title: 'الآحاد',
-                                    selectedIndex: _ones,
-                                    childCount: 10,
-                                    controller: _onesController,
-                                    labelBuilder: (i) =>
-                                        widget.toNormalDigits(i),
-                                    onChanged: (i) {
-                                      final p =
-                                          _composePage(_hundreds, _tens, i);
-                                      _setPage(p);
-                                    },
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: _wheelHeight,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final w = (constraints.maxWidth - 16) / 3;
+                              final wheelW = w.clamp(56.0, _wheelMaxWidth);
+                              return Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  SizedBox(
+                                    width: wheelW,
+                                    height: _wheelHeight,
+                                    child: _buildWheelColumn(
+                                      title: 'الآحاد',
+                                      selectedIndex: _ones,
+                                      childCount: 10,
+                                      controller: _onesController,
+                                      labelBuilder: (i) =>
+                                          widget.toNormalDigits(i),
+                                      onChanged: (i) {
+                                        final p =
+                                            _composePage(_hundreds, _tens, i);
+                                        _setPage(p);
+                                      },
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: wheelW,
-                                  height: _wheelHeight,
-                                  child: _buildWheelColumn(
-                                    title: 'العشرات',
-                                    selectedIndex: _tens,
-                                    childCount: 10,
-                                    controller: _tensController,
-                                    labelBuilder: (i) =>
-                                        widget.toNormalDigits(i),
-                                    onChanged: (i) {
-                                      final p =
-                                          _composePage(_hundreds, i, _ones);
-                                      _setPage(p);
-                                    },
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: wheelW,
+                                    height: _wheelHeight,
+                                    child: _buildWheelColumn(
+                                      title: 'العشرات',
+                                      selectedIndex: _tens,
+                                      childCount: 10,
+                                      controller: _tensController,
+                                      labelBuilder: (i) =>
+                                          widget.toNormalDigits(i),
+                                      onChanged: (i) {
+                                        final p =
+                                            _composePage(_hundreds, i, _ones);
+                                        _setPage(p);
+                                      },
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: wheelW,
-                                  height: _wheelHeight,
-                                  child: _buildWheelColumn(
-                                    title: 'المئات',
-                                    selectedIndex: _hundreds,
-                                    childCount: 7,
-                                    controller: _hundredsController,
-                                    labelBuilder: (i) =>
-                                        widget.toNormalDigits(i),
-                                    onChanged: (i) {
-                                      final p = _composePage(i, _tens, _ones);
-                                      _setPage(p);
-                                    },
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: wheelW,
+                                    height: _wheelHeight,
+                                    child: _buildWheelColumn(
+                                      title: 'المئات',
+                                      selectedIndex: _hundreds,
+                                      childCount: 7,
+                                      controller: _hundredsController,
+                                      labelBuilder: (i) =>
+                                          widget.toNormalDigits(i),
+                                      onChanged: (i) {
+                                        final p = _composePage(i, _tens, _ones);
+                                        _setPage(p);
+                                      },
+                                    ),
                                   ),
-                                ),
-                              ],
-                            );
-                          },
+                                ],
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => _setPage(widget.initialPage),
-                              style: OutlinedButton.styleFrom(
-                                backgroundColor: pal.wheelColumnInnerFill,
-                                side: BorderSide(color: pal.accent),
-                              ),
-                              child: Text(
-                                'إعادة',
-                                style: TextStyle(
-                                  fontFamily: widget.arabicFontFamily,
-                                  fontWeight: FontWeight.w700,
-                                  color: pal.title,
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () => _setPage(widget.initialPage),
+                                style: OutlinedButton.styleFrom(
+                                  backgroundColor: pal.wheelColumnInnerFill,
+                                  side: BorderSide(color: pal.accent),
+                                ),
+                                child: Text(
+                                  'إعادة',
+                                  style: TextStyle(
+                                    fontFamily: widget.arabicFontFamily,
+                                    fontWeight: FontWeight.w700,
+                                    color: pal.title,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: pal.accent,
-                              ),
-                              onPressed: () {
-                                widget.onDismissAll();
-                                widget.onApply(_page);
-                              },
-                              child: Text(
-                                'انتقال',
-                                style: TextStyle(
-                                  fontFamily: widget.arabicFontFamily,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: FilledButton(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: pal.accent,
+                                ),
+                                onPressed: () {
+                                  widget.onDismissAll();
+                                  widget.onApply(_page);
+                                },
+                                child: Text(
+                                  'انتقال',
+                                  style: TextStyle(
+                                    fontFamily: widget.arabicFontFamily,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -9719,9 +9704,8 @@ class _AyahWheelPicker extends StatelessWidget {
                         color: isSelected
                             ? pal.wheelTextSelected
                             : pal.wheelTextUnselected,
-                        fontWeight: isSelected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w500,
                       ),
                     ),
                   );
@@ -10811,9 +10795,7 @@ class _TafseerRangePickerSheetState extends State<_TafseerRangePickerSheet> {
                                     '${widget.toNormalDigits(s.no)} - ${s.nameAr}',
                                     style: TextStyle(
                                       fontSize: 15,
-                                      color: sel
-                                          ? textColor
-                                          : wheelUnsel,
+                                      color: sel ? textColor : wheelUnsel,
                                       fontWeight: sel
                                           ? FontWeight.bold
                                           : FontWeight.normal,
@@ -10863,9 +10845,7 @@ class _TafseerRangePickerSheetState extends State<_TafseerRangePickerSheet> {
                                     widget.toNormalDigits(n),
                                     style: TextStyle(
                                       fontSize: 16,
-                                      color: sel
-                                          ? textColor
-                                          : wheelUnsel,
+                                      color: sel ? textColor : wheelUnsel,
                                       fontWeight: sel
                                           ? FontWeight.bold
                                           : FontWeight.normal,
@@ -10913,9 +10893,7 @@ class _TafseerRangePickerSheetState extends State<_TafseerRangePickerSheet> {
                                     widget.toNormalDigits(n),
                                     style: TextStyle(
                                       fontSize: 16,
-                                      color: sel
-                                          ? textColor
-                                          : wheelUnsel,
+                                      color: sel ? textColor : wheelUnsel,
                                       fontWeight: sel
                                           ? FontWeight.bold
                                           : FontWeight.normal,
@@ -11077,6 +11055,7 @@ class _AzkarSheetContent extends StatefulWidget {
       required Color color,
       FontWeight fontWeight}) quranStyle;
   final RegExp arabicRegex;
+
   /// رجوع خطوة واحدة (مثلاً إلى القائمة الرئيسية).
   final VoidCallback onBack;
   final VoidCallback onDismissAll;
@@ -11465,9 +11444,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
         _NestedMenuAppBar(
           title: widget.sheetTitle,
           titleStyle: widget.quranStyle(
-              fontSize: 20,
-              color: pal.title,
-              fontWeight: FontWeight.bold),
+              fontSize: 20, color: pal.title, fontWeight: FontWeight.bold),
           onBack: widget.onBack,
           onDismissAll: widget.onDismissAll,
         ),
@@ -11587,9 +11564,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
         _NestedMenuAppBar(
           title: arabicTitle,
           titleStyle: widget.quranStyle(
-              fontSize: 18,
-              color: pal.title,
-              fontWeight: FontWeight.bold),
+              fontSize: 18, color: pal.title, fontWeight: FontWeight.bold),
           onBack: _back,
           onDismissAll: widget.onDismissAll,
         ),
@@ -11656,9 +11631,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
                       text.arabicText,
                       style: widget.quranStyle(
                           fontSize: 22,
-                          color: pal.isDark
-                              ? pal.title
-                              : Colors.black87,
+                          color: pal.isDark ? pal.title : Colors.black87,
                           fontWeight: FontWeight.w500),
                       textAlign: TextAlign.right,
                     ),

@@ -2,7 +2,7 @@ name: quran_app
 description: Quran app using hafs_smart_v8 dataset.
 publish_to: 'none'
 
-version: 2.1.18+6
+version: 2.1.20+8
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -93,12 +93,14 @@ flutter:
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"
   android: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
   ios: true
   remove_alpha_ios: true
   web:
     generate: true
     image_path: "assets/icon/app_icon.png"
-    background_color: "#1B5E20"
+    background_color: "#FFFFFF"
     theme_color: "#1B5E20"
   windows:
     generate: true

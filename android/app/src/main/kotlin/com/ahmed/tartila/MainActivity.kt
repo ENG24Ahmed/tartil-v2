@@ -1,4 +1,4 @@
-package com.ahmed.tartil
+package com.ahmed.tartila
 
 import android.content.Context
 import com.ryanheise.audioservice.AudioServicePlugin

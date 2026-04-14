@@ -69,7 +69,7 @@ class AyahAudioPlayer extends ChangeNotifier {
 
   (int, int)? _pendingNextAfterBasmallah;
 
-  static const String _appAlbum = 'ترتيل';
+  static const String _appAlbum = 'ترتيلا';
 
   String get _reciterNameAr {
     final r =
@@ -102,7 +102,7 @@ class AyahAudioPlayer extends ChangeNotifier {
   Future<void> _ensureBackgroundAudioInitialized() async {
     if (_backgroundAudioReady) return;
     _backgroundAudioInitFuture ??= JustAudioBackground.init(
-      androidNotificationChannelId: 'com.ahmed.tartil.channel.audio',
+      androidNotificationChannelId: 'com.ahmed.tartila.channel.audio',
       androidNotificationChannelName: 'التلاوة والأذكار',
       androidNotificationOngoing: true,
     );

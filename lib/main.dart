@@ -51,7 +51,7 @@ class _TartilAppState extends State<TartilApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'ترتيل',
+      title: 'ترتيلا',
       // يتجاهل تكبير/تصغير خط النظام حتى يبقى تخطيط المصحف والطبقات متسقاً.
       builder: (context, child) {
         final mq = MediaQuery.of(context);

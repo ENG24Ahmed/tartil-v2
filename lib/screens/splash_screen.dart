@@ -92,7 +92,7 @@ class _SplashScreenState extends State<SplashScreen>
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _version = '2.1.18');
+        setState(() => _version = '2.1.20');
       }
     }
 
@@ -176,7 +176,7 @@ class _SplashScreenState extends State<SplashScreen>
                 child: FadeTransition(
                   opacity: _textFade,
                   child: const Text(
-                    'ترتيل',
+                    'ترتيلا',
                     style: TextStyle(
                       fontFamily: 'QuranUthmani',
                       fontSize: 42,

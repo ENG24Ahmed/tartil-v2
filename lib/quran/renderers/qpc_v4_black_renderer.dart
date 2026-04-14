@@ -80,78 +80,83 @@ Widget _buildPersistentHighlightSegmentBlack(
   );
 }
 
-double _blackAyahMarkerOverlayDy({
-  required String lineText,
-  required TextStyle lineStyle,
-  required bool isCentered,
-  required List<AyahSegment> ayahSegments,
-  required bool isCompactMode,
-}) {
-  int markerStart = -1;
-  int markerEnd = -1;
-  int cursor = 0;
-  for (final seg in ayahSegments) {
+List<(int start, int end)> _markerCharRangesInAyahLine(List<AyahSegment> segs) {
+  final ranges = <(int start, int end)>[];
+  var cursor = 0;
+  for (final seg in segs) {
     final next = cursor + seg.text.length;
     if (seg.isMarker && seg.text.isNotEmpty) {
-      markerStart = cursor;
-      markerEnd = next;
-      break;
+      ranges.add((cursor, next));
     }
     cursor = next;
   }
-  final basePainter = TextPainter(
-    text: TextSpan(text: lineText, style: lineStyle),
-    textDirection: TextDirection.rtl,
-    textAlign: isCentered ? TextAlign.center : TextAlign.right,
-    maxLines: 1,
-    textScaler: TextScaler.noScaling,
-    textWidthBasis: TextWidthBasis.parent,
-  )..layout(maxWidth: double.infinity);
-  final markerPainter = TextPainter(
-    text: TextSpan(
-      style: lineStyle,
-      children: [
-        for (final seg in ayahSegments)
-          TextSpan(
-            text: seg.text,
-            style: lineStyle.copyWith(
-              color: seg.isMarker ? Colors.black : Colors.transparent,
-            ),
-          ),
-      ],
-    ),
-    textDirection: TextDirection.rtl,
-    textAlign: isCentered ? TextAlign.center : TextAlign.right,
-    maxLines: 1,
-    textScaler: TextScaler.noScaling,
-    textWidthBasis: TextWidthBasis.parent,
-  )..layout(maxWidth: double.infinity);
-  if (markerStart >= 0 && markerEnd > markerStart && markerEnd <= lineText.length) {
-    final markerSel = TextSelection(baseOffset: markerStart, extentOffset: markerEnd);
-    final baseBoxes = basePainter.getBoxesForSelection(markerSel);
-    final markerBoxes = markerPainter.getBoxesForSelection(markerSel);
-    if (baseBoxes.isNotEmpty && markerBoxes.isNotEmpty) {
-      final baseBox = baseBoxes.first;
-      final markerBox = markerBoxes.first;
-      // محاذاة حافة العلامة السفلية نفسها بدل baseline عام للسطر.
-      final bottomDelta = (baseBox.bottom - markerBox.bottom).toDouble();
-      // تعويض بصري صغير مرتبط بارتفاع العلامة نفسها (أثبت من قيمة ثابتة عامة).
-      final visualBiasDown =
-          (markerBox.toRect().height * 0.14).clamp(1.0, 2.0).toDouble();
-      // في الوضع الأفقي (compact) تظهر العلامة أعلى قليلًا بسبب اختلاف القياس.
-      final compactExtraDown = isCompactMode
-          ? ((lineStyle.fontSize ?? 23.0) * 0.03).clamp(0.35, 0.95).toDouble()
-          : 0.0;
-      return (bottomDelta + visualBiasDown + compactExtraDown)
-          .clamp(-6.0, 6.0)
-          .toDouble();
+  return ranges;
+}
+
+bool _sameAyahSegments(List<AyahSegment> a, List<AyahSegment> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].text != b[i].text || a[i].isMarker != b[i].isMarker) {
+      return false;
     }
   }
-  final baseBaseline =
-      basePainter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
-  final markerBaseline =
-      markerPainter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
-  return (baseBaseline - markerBaseline).clamp(-6.0, 6.0).toDouble();
+  return true;
+}
+
+/// قصّ يُظهر فقط مقطع علامة الآية من نفس [Text] الأصلي (بدون نص علوي مستقل).
+class _BlackAyahMarkerRevealClipper extends CustomClipper<Path> {
+  _BlackAyahMarkerRevealClipper({
+    required this.lineText,
+    required this.lineStyle,
+    required this.isCentered,
+    required this.ayahSegments,
+    required this.textScaler,
+  });
+
+  final String lineText;
+  final TextStyle lineStyle;
+  final bool isCentered;
+  final List<AyahSegment> ayahSegments;
+  final TextScaler textScaler;
+
+  @override
+  Path getClip(Size size) {
+    final ranges = _markerCharRangesInAyahLine(ayahSegments);
+    if (ranges.isEmpty) {
+      return Path();
+    }
+    final painter = TextPainter(
+      text: TextSpan(text: lineText, style: lineStyle),
+      textDirection: TextDirection.rtl,
+      textAlign: isCentered ? TextAlign.center : TextAlign.right,
+      maxLines: 1,
+      textScaler: textScaler,
+      textWidthBasis: TextWidthBasis.parent,
+    )..layout(maxWidth: size.width);
+    final path = Path();
+    const pad = 1.0;
+    for (final range in ranges) {
+      final start = range.$1;
+      final end = range.$2;
+      if (start < 0 || end <= start || end > lineText.length) continue;
+      final boxes = painter.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: end),
+      );
+      for (final box in boxes) {
+        path.addRect(box.toRect().inflate(pad));
+      }
+    }
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant _BlackAyahMarkerRevealClipper oldClipper) {
+    return oldClipper.lineText != lineText ||
+        oldClipper.lineStyle != lineStyle ||
+        oldClipper.isCentered != isCentered ||
+        oldClipper.textScaler != textScaler ||
+        !_sameAyahSegments(oldClipper.ayahSegments, ayahSegments);
+  }
 }
 
 class _WavyHighlightPainterBlack extends CustomPainter {
@@ -341,19 +346,18 @@ class QpcV4BlackPageView extends StatelessWidget {
     );
   }
 
-  /// سطر آية أسود: [ColorFiltered] يزيل ألوان التجويد المدمجة في خط QCF.
-  /// عند وجود علامة آية: طبقة ثانية [RichText] تلوّن العلامة فقط (الباقي شفاف).
-  /// بدون [StrutStyle]/[TextHeightBehavior] الإضافية — نفس مقاييس [Text] في QPC4 الملون
-  /// حتى لا يرتفع السطر قليلاً داخل الخانة.
+  /// سطر آية أسود: [ColorFiltered] يزيل ألوان التجويد في خط QCF.
+  /// نفس حقول [Text] كما في سطر الآية في [QpcV4PageView] (بدون [TextScaler.noScaling])
+  /// حتى يطابق التجويد موضعًا؛ عند وجود علامة آية: رسم واحد + استثناء العلامة من srcIn.
   static Widget _buildBlackAyahLine({
+    required BuildContext context,
     required String lineText,
     required TextStyle lineStyle,
     required Color glyphColor,
     required bool isCentered,
-    required bool isCompactMode,
     List<AyahSegment>? ayahSegments,
-    required Color ayahMarkerColor,
   }) {
+    final textScaler = MediaQuery.textScalerOf(context);
     Text baseTextWidget() => Text(
           lineText,
           textDirection: TextDirection.rtl,
@@ -361,7 +365,7 @@ class QpcV4BlackPageView extends StatelessWidget {
           softWrap: false,
           maxLines: 1,
           overflow: TextOverflow.visible,
-          textScaler: TextScaler.noScaling,
+          textScaler: textScaler,
           textWidthBasis: TextWidthBasis.parent,
           style: lineStyle,
         );
@@ -382,39 +386,16 @@ class QpcV4BlackPageView extends StatelessWidget {
           colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
           child: baseTextWidget(),
         ),
-        Transform.translate(
-          offset: Offset(
-            0,
-            _blackAyahMarkerOverlayDy(
-              lineText: lineText,
-              lineStyle: lineStyle,
-              isCentered: isCentered,
-              ayahSegments: ayahSegments,
-              isCompactMode: isCompactMode,
-            ),
+        ClipPath(
+          clipBehavior: Clip.hardEdge,
+          clipper: _BlackAyahMarkerRevealClipper(
+            lineText: lineText,
+            lineStyle: lineStyle,
+            isCentered: isCentered,
+            ayahSegments: ayahSegments,
+            textScaler: textScaler,
           ),
-          child: RichText(
-            textDirection: TextDirection.rtl,
-            textAlign: isCentered ? TextAlign.center : TextAlign.right,
-            softWrap: false,
-            maxLines: 1,
-            overflow: TextOverflow.visible,
-            textScaler: TextScaler.noScaling,
-            textWidthBasis: TextWidthBasis.parent,
-            text: TextSpan(
-              style: lineStyle,
-              children: [
-                for (final seg in ayahSegments)
-                  TextSpan(
-                    text: seg.text,
-                    style: lineStyle.copyWith(
-                      color:
-                          seg.isMarker ? ayahMarkerColor : Colors.transparent,
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          child: baseTextWidget(),
         ),
       ],
     );
@@ -468,10 +449,6 @@ class QpcV4BlackPageView extends StatelessWidget {
   }) {
     final glyphColor = forceWhiteTextOnDark ? Colors.white : Colors.black;
 
-    /// لون علامات نهاية الآية فوق طبقة [ColorFiltered] (غير ممرَّرة بـ srcIn).
-    final ayahEndMarkerColor = forceWhiteTextOnDark
-        ? const Color(0xFFFFAB91)
-        : const Color(0xFFB71C1C);
     final ayahSelectionColor = forceWhiteTextOnDark
         ? const Color(0xFFB3E5FC)
         : const Color.fromARGB(255, 45, 45, 45);
@@ -666,13 +643,12 @@ class QpcV4BlackPageView extends StatelessWidget {
             final lineStyle =
                 getJustifiedLineStyle(line, lineStyleStep, contentW);
             final lineContent = _buildBlackAyahLine(
+              context: context,
               lineText: line.lineText,
               lineStyle: lineStyle,
               glyphColor: glyphColor,
               isCentered: line.isCentered,
-              isCompactMode: isCompact,
               ayahSegments: line.ayahSegments,
-              ayahMarkerColor: ayahEndMarkerColor,
             );
             final lineWidth = mushafMeasureLineWidth(line.lineText, lineStyle);
             final linePainter = mushafLaidOutRtlLinePainter(

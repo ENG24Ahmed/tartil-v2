@@ -1,11 +1,11 @@
 {
-    "name": "ترتيل",
-    "short_name": "ترتيل",
+    "name": "ترتيلا",
+    "short_name": "ترتيلا",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#1B5E20",
+    "background_color": "#FFFFFF",
     "theme_color": "#1B5E20",
-    "description": "مصحف ترتيل — تلاوة القرآن الكريم",
+    "description": "مصحف ترتيلا — تلاوة القرآن الكريم",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
