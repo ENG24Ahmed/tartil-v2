@@ -1,4 +1,5 @@
-import 'dart:math' show min;
+import 'dart:math' show max, min;
+import 'dart:ui' show BoxHeightStyle, BoxWidthStyle;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -93,6 +94,19 @@ List<(int start, int end)> _markerCharRangesInAyahLine(List<AyahSegment> segs) {
   return ranges;
 }
 
+List<(int start, int end)> _nonMarkerCharRanges(List<AyahSegment> segs) {
+  final ranges = <(int start, int end)>[];
+  var cursor = 0;
+  for (final seg in segs) {
+    final next = cursor + seg.text.length;
+    if (!seg.isMarker && seg.text.isNotEmpty) {
+      ranges.add((cursor, next));
+    }
+    cursor = next;
+  }
+  return ranges;
+}
+
 bool _sameAyahSegments(List<AyahSegment> a, List<AyahSegment> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
@@ -101,6 +115,48 @@ bool _sameAyahSegments(List<AyahSegment> a, List<AyahSegment> b) {
     }
   }
   return true;
+}
+
+bool _sameCharRanges(
+    List<(int start, int end)> a, List<(int start, int end)> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+List<(int start, int end, Color color)> _recitationCharRangesInAyahLine(
+  List<AyahSegment> segs,
+  int? rangeStart,
+  Map<int, Color> recitationWordColors,
+) {
+  if (segs.isEmpty || rangeStart == null || recitationWordColors.isEmpty) {
+    return const [];
+  }
+
+  final ranges = <(int start, int end, Color color)>[];
+  var cursor = 0;
+  for (var i = 0; i < segs.length; i++) {
+    final seg = segs[i];
+    final next = cursor + seg.text.length;
+    if (!seg.isMarker && seg.text.isNotEmpty) {
+      final wordId = rangeStart + i;
+      final color = recitationWordColors[wordId];
+      if (color != null) {
+        if (ranges.isNotEmpty &&
+            ranges.last.$3.toARGB32() == color.toARGB32() &&
+            ranges.last.$2 == cursor) {
+          final previous = ranges.removeLast();
+          ranges.add((previous.$1, next, color));
+        } else {
+          ranges.add((cursor, next, color));
+        }
+      }
+    }
+    cursor = next;
+  }
+  return ranges;
 }
 
 /// قصّ يُظهر فقط مقطع علامة الآية من نفس [Text] الأصلي (بدون نص علوي مستقل).
@@ -136,14 +192,14 @@ class _BlackAyahMarkerRevealClipper extends CustomClipper<Path> {
     final path = Path();
     const pad = 1.0;
     for (final range in ranges) {
-      final start = range.$1;
-      final end = range.$2;
-      if (start < 0 || end <= start || end > lineText.length) continue;
-      final boxes = painter.getBoxesForSelection(
-        TextSelection(baseOffset: start, extentOffset: end),
-      );
-      for (final box in boxes) {
-        path.addRect(box.toRect().inflate(pad));
+      for (final rect in _glyphRectsForSelectionRobust(
+        painter,
+        lineText,
+        range.$1,
+        range.$2,
+        pad: pad,
+      )) {
+        path.addRect(rect);
       }
     }
     return path;
@@ -156,6 +212,240 @@ class _BlackAyahMarkerRevealClipper extends CustomClipper<Path> {
         oldClipper.isCentered != isCentered ||
         oldClipper.textScaler != textScaler ||
         !_sameAyahSegments(oldClipper.ayahSegments, ayahSegments);
+  }
+}
+
+class _BlackAyahRangeClipper extends CustomClipper<Path> {
+  _BlackAyahRangeClipper({
+    required this.lineText,
+    required this.lineStyle,
+    required this.isCentered,
+    required this.ranges,
+    required this.textScaler,
+  });
+
+  final String lineText;
+  final TextStyle lineStyle;
+  final bool isCentered;
+  final List<(int start, int end)> ranges;
+  final TextScaler textScaler;
+
+  @override
+  Path getClip(Size size) {
+    if (ranges.isEmpty) return Path();
+    final painter = TextPainter(
+      text: TextSpan(text: lineText, style: lineStyle),
+      textDirection: TextDirection.rtl,
+      textAlign: isCentered ? TextAlign.center : TextAlign.right,
+      maxLines: 1,
+      textScaler: textScaler,
+      textWidthBasis: TextWidthBasis.parent,
+    )..layout(maxWidth: size.width);
+    final path = Path();
+    const pad = 1.0;
+    for (final range in ranges) {
+      for (final rect in _glyphRectsForSelectionRobust(
+        painter,
+        lineText,
+        range.$1,
+        range.$2,
+        pad: pad,
+      )) {
+        path.addRect(rect);
+      }
+    }
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant _BlackAyahRangeClipper oldClipper) {
+    return oldClipper.lineText != lineText ||
+        oldClipper.lineStyle != lineStyle ||
+        oldClipper.isCentered != isCentered ||
+        oldClipper.textScaler != textScaler ||
+        !_sameCharRanges(oldClipper.ranges, ranges);
+  }
+}
+
+List<Rect> _tightBoxRectsForSelection(
+  TextPainter laidOut, {
+  required int start,
+  required int end,
+  double pad = 1.0,
+}) {
+  if (end <= start) return const <Rect>[];
+  final boxes = laidOut.getBoxesForSelection(
+    TextSelection(baseOffset: start, extentOffset: end),
+    boxWidthStyle: BoxWidthStyle.tight,
+    boxHeightStyle: BoxHeightStyle.tight,
+  );
+  return [for (final b in boxes) b.toRect().inflate(pad)];
+}
+
+/// When [getBoxesForSelection] returns nothing (RTL / ayah marker clusters), fall
+/// back so marker reveal still paints above [ColorFiltered] black.
+List<Rect> _glyphRectsForSelectionRobust(
+  TextPainter laidOut,
+  String lineText,
+  int start,
+  int end, {
+  double pad = 1.0,
+  bool allowLooseMaxFallback = true,
+}) {
+  if (end <= start || start < 0 || end > lineText.length) {
+    return const <Rect>[];
+  }
+  var rects = _tightBoxRectsForSelection(
+    laidOut,
+    start: start,
+    end: end,
+    pad: 0,
+  );
+  if (rects.isNotEmpty) {
+    return [for (final r in rects) r.inflate(pad)];
+  }
+  if (allowLooseMaxFallback) {
+    final loose = laidOut.getBoxesForSelection(
+      TextSelection(baseOffset: start, extentOffset: end),
+      boxWidthStyle: BoxWidthStyle.max,
+      boxHeightStyle: BoxHeightStyle.max,
+    );
+    if (loose.isNotEmpty) {
+      return [for (final b in loose) b.toRect().inflate(pad)];
+    }
+  }
+  final proto =
+      Rect.fromLTWH(0, 0, laidOut.width.clamp(1, 99999), laidOut.height);
+  final oStart = laidOut.getOffsetForCaret(
+    TextPosition(offset: start, affinity: TextAffinity.downstream),
+    proto,
+  );
+  final oEnd = laidOut.getOffsetForCaret(
+    TextPosition(offset: end, affinity: TextAffinity.upstream),
+    proto,
+  );
+  final left = min(oStart.dx, oEnd.dx);
+  final right = max(oStart.dx, oEnd.dx);
+  if (right - left < 0.15 && (oEnd.dx - oStart.dx).abs() < 0.15) {
+    return const <Rect>[];
+  }
+  return [
+    Rect.fromLTRB(left - pad, -pad, right + pad, laidOut.height + pad),
+  ];
+}
+
+/// Pull non-marker clip rects away from marker ink horizontally (RTL) so black
+/// [srcIn] doesn’t cover the right edge of ayah markers.
+List<Rect> _shrinkNonMarkerRectsAwayFromMarkers(
+  List<Rect> nonMarker,
+  List<Rect> markerRects,
+  double gap,
+) {
+  if (markerRects.isEmpty || nonMarker.isEmpty || gap <= 0) return nonMarker;
+  final out = <Rect>[];
+  for (final s in nonMarker) {
+    var left = s.left;
+    var right = s.right;
+    for (final m in markerRects) {
+      if (s.bottom <= m.top || s.top >= m.bottom) continue;
+      final mx0 = m.left - gap;
+      final mx1 = m.right + gap;
+      if (right <= mx0 || left >= mx1) continue;
+      final mcx = m.center.dx;
+      final scx = s.center.dx;
+      if (mcx > scx) {
+        right = min(right, mx0);
+      } else if (mcx < scx) {
+        left = max(left, mx1);
+      }
+    }
+    if (right > left + 0.5) {
+      out.add(Rect.fromLTRB(left, s.top, right, s.bottom));
+    }
+  }
+  return out;
+}
+
+/// Clip rects for [srcIn] black on non-marker spans only (no [BoxWidthStyle.max],
+/// so boxes don’t extend into ayah marker clusters).
+List<Rect> _nonMarkerBlackClipRects(
+  TextPainter laidOut,
+  String lineText,
+  List<AyahSegment> ayahSegments,
+  double markerAdjacentTrimPx,
+) {
+  var rects = <Rect>[];
+  for (final r in _nonMarkerCharRanges(ayahSegments)) {
+    rects.addAll(
+      _glyphRectsForSelectionRobust(
+        laidOut,
+        lineText,
+        r.$1,
+        r.$2,
+        allowLooseMaxFallback: false,
+      ),
+    );
+  }
+  if (markerAdjacentTrimPx > 0) {
+    final markerBoxes = <Rect>[];
+    for (final r in _markerCharRangesInAyahLine(ayahSegments)) {
+      markerBoxes.addAll(
+        _glyphRectsForSelectionRobust(
+          laidOut,
+          lineText,
+          r.$1,
+          r.$2,
+          allowLooseMaxFallback: false,
+        ),
+      );
+    }
+    if (markerBoxes.isNotEmpty) {
+      rects = _shrinkNonMarkerRectsAwayFromMarkers(
+        rects,
+        markerBoxes,
+        markerAdjacentTrimPx,
+      );
+    }
+  }
+  return rects;
+}
+
+Rect? _rectUnion(List<Rect> rects) {
+  if (rects.isEmpty) return null;
+  var left = rects.first.left;
+  var top = rects.first.top;
+  var right = rects.first.right;
+  var bottom = rects.first.bottom;
+  for (var i = 1; i < rects.length; i++) {
+    final r = rects[i];
+    if (r.left < left) left = r.left;
+    if (r.top < top) top = r.top;
+    if (r.right > right) right = r.right;
+    if (r.bottom > bottom) bottom = r.bottom;
+  }
+  return Rect.fromLTRB(left, top, right, bottom);
+}
+
+class _MushafTextBoxListClipper extends CustomClipper<Path> {
+  const _MushafTextBoxListClipper({required this.boxes});
+  final List<Rect> boxes;
+
+  @override
+  Path getClip(Size size) {
+    final p = Path();
+    for (final r in boxes) {
+      p.addRect(r);
+    }
+    return p;
+  }
+
+  @override
+  bool shouldReclip(covariant _MushafTextBoxListClipper o) {
+    if (o.boxes.length != boxes.length) return true;
+    for (var i = 0; i < boxes.length; i++) {
+      if (o.boxes[i] != boxes[i]) return true;
+    }
+    return false;
   }
 }
 
@@ -216,9 +506,22 @@ class QpcV4BlackPageView extends StatelessWidget {
     super.key,
     required this.page,
     this.forceWhiteTextOnDark = false,
+    this.hideUnrevealedWords = false,
+    this.recitationWordColors = const {},
+    this.usePreciseRecitationOverlay = false,
+    this.lightweightMode = false,
+    this.mediumQualityMode = false,
   });
   final int page;
   final bool forceWhiteTextOnDark;
+  final bool hideUnrevealedWords;
+  final Map<int, Color> recitationWordColors;
+  final bool usePreciseRecitationOverlay;
+  final bool lightweightMode;
+  final bool mediumQualityMode;
+  static const int _blackUniformScaleCacheMaxEntries = 240;
+  static final Map<String, double> _blackUniformScaleCache =
+      <String, double>{};
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +543,11 @@ class QpcV4BlackPageView extends StatelessWidget {
           cached,
           baseStyle,
           forceWhiteTextOnDark: forceWhiteTextOnDark,
+          hideUnrevealedWords: hideUnrevealedWords,
+          recitationWordColors: recitationWordColors,
+          usePreciseRecitationOverlay: usePreciseRecitationOverlay,
+          lightweightMode: lightweightMode,
+          mediumQualityMode: mediumQualityMode,
         ),
         placeholder: (context) => ColoredBox(
           color: MushafPaperBackgroundScope.of(context),
@@ -279,6 +587,11 @@ class QpcV4BlackPageView extends StatelessWidget {
           pageLines,
           baseStyle,
           forceWhiteTextOnDark: forceWhiteTextOnDark,
+          hideUnrevealedWords: hideUnrevealedWords,
+          recitationWordColors: recitationWordColors,
+          usePreciseRecitationOverlay: usePreciseRecitationOverlay,
+          lightweightMode: lightweightMode,
+          mediumQualityMode: mediumQualityMode,
         );
       },
     );
@@ -304,7 +617,12 @@ class QpcV4BlackPageView extends StatelessWidget {
 
   static Widget _buildPageWithMapping(BuildContext context, int page,
       List<MushafPageLine> pageLines, TextStyle baseStyle,
-      {bool forceWhiteTextOnDark = false}) {
+      {bool forceWhiteTextOnDark = false,
+      bool hideUnrevealedWords = false,
+      Map<int, Color> recitationWordColors = const {},
+      bool usePreciseRecitationOverlay = false,
+      bool lightweightMode = false,
+      bool mediumQualityMode = false}) {
     int? minR;
     int? maxR;
     for (final line in pageLines) {
@@ -330,19 +648,60 @@ class QpcV4BlackPageView extends StatelessWidget {
         null,
         null,
         forceWhiteTextOnDark: forceWhiteTextOnDark,
+        hideUnrevealedWords: hideUnrevealedWords,
+        recitationWordColors: recitationWordColors,
+        usePreciseRecitationOverlay: usePreciseRecitationOverlay,
       );
     }
-    return FutureBuilder<Map<int, (int, int)>>(
-      future: QuranDb.instance.getWordToAyahMapping(minR, maxR),
-      builder: (_, mapSnap) {
-        return _QpcV4BlackPageContentStateful(
-          page: page,
-          pageLines: pageLines,
-          baseStyle: baseStyle,
-          mapping: mapSnap.data,
+    if (lightweightMode) {
+      return _buildContent(
+        context,
+        page,
+        pageLines,
+        baseStyle,
+        null,
+        null,
+        null,
+        null,
+        forceWhiteTextOnDark: forceWhiteTextOnDark,
+        hideUnrevealedWords: false,
+        recitationWordColors: const {},
+        usePreciseRecitationOverlay: false,
+      );
+    }
+    if (mediumQualityMode) {
+      return _WordToAyahMappingLoaderBlack(
+        minRange: minR,
+        maxRange: maxR,
+        builder: (mapping) => _buildContent(
+          context,
+          page,
+          pageLines,
+          baseStyle,
+          mapping,
+          null,
+          null,
+          null,
           forceWhiteTextOnDark: forceWhiteTextOnDark,
-        );
-      },
+          hideUnrevealedWords: false,
+          recitationWordColors: const {},
+          usePreciseRecitationOverlay: false,
+        ),
+      );
+    }
+    return _WordToAyahMappingLoaderBlack(
+      minRange: minR,
+      maxRange: maxR,
+      builder: (mapping) => _QpcV4BlackPageContentStateful(
+        page: page,
+        pageLines: pageLines,
+        baseStyle: baseStyle,
+        mapping: mapping,
+        forceWhiteTextOnDark: forceWhiteTextOnDark,
+        hideUnrevealedWords: hideUnrevealedWords,
+        recitationWordColors: recitationWordColors,
+        usePreciseRecitationOverlay: usePreciseRecitationOverlay,
+      ),
     );
   }
 
@@ -355,13 +714,20 @@ class QpcV4BlackPageView extends StatelessWidget {
     required TextStyle lineStyle,
     required Color glyphColor,
     required bool isCentered,
+    required double lineLayoutWidth,
     List<AyahSegment>? ayahSegments,
+    int? rangeStart,
+    bool hideUnrevealedWords = false,
+    Map<int, Color> recitationWordColors = const {},
+    bool usePreciseRecitationOverlay = false,
   }) {
     final textScaler = MediaQuery.textScalerOf(context);
+    final paperColor = MushafPaperBackgroundScope.of(context);
+    final align = isCentered ? TextAlign.center : TextAlign.right;
     Text baseTextWidget() => Text(
           lineText,
           textDirection: TextDirection.rtl,
-          textAlign: isCentered ? TextAlign.center : TextAlign.right,
+          textAlign: align,
           softWrap: false,
           maxLines: 1,
           overflow: TextOverflow.visible,
@@ -369,23 +735,275 @@ class QpcV4BlackPageView extends StatelessWidget {
           textWidthBasis: TextWidthBasis.parent,
           style: lineStyle,
         );
+    final markerAdjacentTrimPx =
+        ((lineStyle.fontSize ?? 23) * 0.026).clamp(0.55, 1.15);
     final hasMarkerLayer = ayahSegments != null &&
         ayahSegments.isNotEmpty &&
         ayahSegments.any((s) => s.isMarker);
-    if (!hasMarkerLayer) {
+    final recitationRanges = ayahSegments == null
+        ? const <(int start, int end, Color color)>[]
+        : _recitationCharRangesInAyahLine(
+            ayahSegments,
+            rangeStart,
+            recitationWordColors,
+          );
+    final baseGlyphColor = hideUnrevealedWords ? paperColor : glyphColor;
+    if (!usePreciseRecitationOverlay &&
+        !hasMarkerLayer &&
+        recitationRanges.isEmpty) {
       return ColorFiltered(
-        colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
+        colorFilter: ColorFilter.mode(baseGlyphColor, BlendMode.srcIn),
         child: baseTextWidget(),
       );
     }
-    return Stack(
-      alignment: isCentered ? Alignment.topCenter : Alignment.topRight,
-      clipBehavior: Clip.none,
-      children: [
+    final usePreciseOverlayNow = usePreciseRecitationOverlay;
+    if (usePreciseOverlayNow) {
+      final laidOut = TextPainter(
+        text: TextSpan(text: lineText, style: lineStyle),
+        textDirection: TextDirection.rtl,
+        textAlign: align,
+        maxLines: 1,
+        textScaler: textScaler,
+        textWidthBasis: TextWidthBasis.parent,
+      )..layout(maxWidth: lineLayoutWidth);
+
+      final children = <Widget>[];
+
+      void addRecitationOrMarkerLayer({
+        required int start,
+        required int end,
+        required bool colorFiltered,
+        Color? filterColor,
+      }) {
+        if (start < 0 || end <= start || end > lineText.length) return;
+        final rects = colorFiltered
+            ? _tightBoxRectsForSelection(
+                laidOut,
+                start: start,
+                end: end,
+              )
+            : _glyphRectsForSelectionRobust(
+                laidOut,
+                lineText,
+                start,
+                end,
+              );
+        if (rects.isEmpty) return;
+        if (rects.length == 1) {
+          final r = rects.first;
+          if (!r.isFinite) return;
+          final sub = lineText.substring(start, end);
+          if (sub.isEmpty) return;
+          final inner = Text(
+            sub,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.center,
+            softWrap: false,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            textScaler: textScaler,
+            textWidthBasis: TextWidthBasis.parent,
+            style: lineStyle,
+          );
+          final painted = colorFiltered && filterColor != null
+              ? ColorFiltered(
+                  colorFilter: ColorFilter.mode(filterColor, BlendMode.srcIn),
+                  child: inner,
+                )
+              : inner;
+          final subPainter = TextPainter(
+            text: TextSpan(text: sub, style: lineStyle),
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            textScaler: textScaler,
+            textWidthBasis: TextWidthBasis.parent,
+          )..layout(maxWidth: r.width);
+          final subRects = _tightBoxRectsForSelection(
+            subPainter,
+            start: 0,
+            end: sub.length,
+            pad: 0,
+          );
+          final subBounds = _rectUnion(subRects);
+          final horizontalNudge = -((lineStyle.fontSize ?? 23) * 0.090);
+          final overlayTop =
+              subBounds == null ? r.top : (r.center.dy - subBounds.center.dy);
+          final overlayLeft = subBounds == null
+              ? (r.left + horizontalNudge)
+              : (r.center.dx - subBounds.center.dx + horizontalNudge);
+          final overlayHeight =
+              subPainter.height > 0 ? subPainter.height : r.height;
+          children.add(
+            Positioned(
+              left: overlayLeft,
+              top: overlayTop,
+              width: r.width,
+              height: overlayHeight,
+              child: SizedBox(
+                width: r.width,
+                height: overlayHeight,
+                child: Align(
+                  alignment: Alignment.center,
+                  child: painted,
+                ),
+              ),
+            ),
+          );
+          return;
+        }
+        if (colorFiltered && filterColor != null) {
+          children.add(
+            ClipPath(
+              clipBehavior: Clip.hardEdge,
+              clipper: _MushafTextBoxListClipper(boxes: rects),
+              child: ColorFiltered(
+                colorFilter: ColorFilter.mode(filterColor, BlendMode.srcIn),
+                child: baseTextWidget(),
+              ),
+            ),
+          );
+        } else {
+          children.add(
+            ClipPath(
+              clipBehavior: Clip.hardEdge,
+              clipper: _MushafTextBoxListClipper(boxes: rects),
+              child: baseTextWidget(),
+            ),
+          );
+        }
+      }
+
+      /// Full tajweed underneath; black [srcIn] only on non-marker spans — markers
+      /// never pass through flat black (fixes lines where marker “reveal” boxes fail).
+      if (hasMarkerLayer && !hideUnrevealedWords) {
+        final nonMarkerRects = _nonMarkerBlackClipRects(
+          laidOut,
+          lineText,
+          ayahSegments,
+          markerAdjacentTrimPx,
+        );
+        children.add(Positioned.fill(child: baseTextWidget()));
+        if (nonMarkerRects.isNotEmpty) {
+          children.add(
+            ClipPath(
+              clipBehavior: Clip.hardEdge,
+              clipper: _MushafTextBoxListClipper(boxes: nonMarkerRects),
+              child: ColorFiltered(
+                colorFilter: ColorFilter.mode(baseGlyphColor, BlendMode.srcIn),
+                child: baseTextWidget(),
+              ),
+            ),
+          );
+        }
+        for (final range in recitationRanges) {
+          addRecitationOrMarkerLayer(
+            start: range.$1,
+            end: range.$2,
+            colorFiltered: true,
+            filterColor: range.$3,
+          );
+        }
+        return Stack(
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
+          children: children,
+        );
+      }
+
+      // Base layer in precise mode: draw full ayah line using the same
+      // positioned top-layer pipeline so all lines share one rendering path.
+      addRecitationOrMarkerLayer(
+        start: 0,
+        end: lineText.length,
+        colorFiltered: true,
+        filterColor: baseGlyphColor,
+      );
+
+      for (final range in recitationRanges) {
+        addRecitationOrMarkerLayer(
+          start: range.$1,
+          end: range.$2,
+          colorFiltered: true,
+          filterColor: range.$3,
+        );
+      }
+      if (hasMarkerLayer) {
+        for (final range in _markerCharRangesInAyahLine(ayahSegments)) {
+          addRecitationOrMarkerLayer(
+            start: range.$1,
+            end: range.$2,
+            colorFiltered: false,
+          );
+        }
+      }
+
+      return Stack(
+        alignment: Alignment.topCenter,
+        clipBehavior: Clip.none,
+        children: children,
+      );
+    }
+
+    final overlayLayers = <Widget>[];
+    if (hasMarkerLayer && !hideUnrevealedWords) {
+      final pOverlay = TextPainter(
+        text: TextSpan(text: lineText, style: lineStyle),
+        textDirection: TextDirection.rtl,
+        textAlign: align,
+        maxLines: 1,
+        textScaler: textScaler,
+        textWidthBasis: TextWidthBasis.parent,
+      )..layout(maxWidth: lineLayoutWidth);
+      final nonMarkerRects = _nonMarkerBlackClipRects(
+        pOverlay,
+        lineText,
+        ayahSegments,
+        markerAdjacentTrimPx,
+      );
+      overlayLayers.add(Positioned.fill(child: baseTextWidget()));
+      if (nonMarkerRects.isNotEmpty) {
+        overlayLayers.add(
+          ClipPath(
+            clipBehavior: Clip.hardEdge,
+            clipper: _MushafTextBoxListClipper(boxes: nonMarkerRects),
+            child: ColorFiltered(
+              colorFilter: ColorFilter.mode(baseGlyphColor, BlendMode.srcIn),
+              child: baseTextWidget(),
+            ),
+          ),
+        );
+      }
+    } else {
+      overlayLayers.add(
         ColorFiltered(
-          colorFilter: ColorFilter.mode(glyphColor, BlendMode.srcIn),
+          colorFilter: ColorFilter.mode(baseGlyphColor, BlendMode.srcIn),
           child: baseTextWidget(),
         ),
+      );
+    }
+
+    for (final range in recitationRanges) {
+      overlayLayers.add(
+        ClipPath(
+          clipBehavior: Clip.hardEdge,
+          clipper: _BlackAyahRangeClipper(
+            lineText: lineText,
+            lineStyle: lineStyle,
+            isCentered: isCentered,
+            ranges: [(range.$1, range.$2)],
+            textScaler: textScaler,
+          ),
+          child: ColorFiltered(
+            colorFilter: ColorFilter.mode(range.$3, BlendMode.srcIn),
+            child: baseTextWidget(),
+          ),
+        ),
+      );
+    }
+
+    if (hasMarkerLayer && hideUnrevealedWords) {
+      overlayLayers.add(
         ClipPath(
           clipBehavior: Clip.hardEdge,
           clipper: _BlackAyahMarkerRevealClipper(
@@ -397,18 +1015,35 @@ class QpcV4BlackPageView extends StatelessWidget {
           ),
           child: baseTextWidget(),
         ),
-      ],
+      );
+    }
+
+    return Stack(
+      alignment: Alignment.topCenter,
+      clipBehavior: Clip.none,
+      children: overlayLayers,
     );
   }
 
   /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
   static double _computeBlackUniformAyahScale(
+    int page,
     List<MushafPageLine> displayLines,
     double layoutW,
     double slotHeight,
     TextStyle effectiveBaseStyle,
     double lineStyleFontSizeScale,
   ) {
+    final cacheKey = [
+      page,
+      layoutW.toStringAsFixed(2),
+      slotHeight.toStringAsFixed(2),
+      (effectiveBaseStyle.fontSize ?? 23).toStringAsFixed(4),
+      lineStyleFontSizeScale.toStringAsFixed(4),
+    ].join('|');
+    final cached = _blackUniformScaleCache[cacheKey];
+    if (cached != null) return cached;
+
     var minScale = 1.0;
     for (final line in displayLines) {
       if (line.lineType != 'ayah') continue;
@@ -430,6 +1065,10 @@ class QpcV4BlackPageView extends StatelessWidget {
       final s = min(1.0, min(sw, sh));
       if (s < minScale) minScale = s;
     }
+    if (_blackUniformScaleCache.length >= _blackUniformScaleCacheMaxEntries) {
+      _blackUniformScaleCache.remove(_blackUniformScaleCache.keys.first);
+    }
+    _blackUniformScaleCache[cacheKey] = minScale;
     return minScale;
   }
 
@@ -446,6 +1085,9 @@ class QpcV4BlackPageView extends StatelessWidget {
     (int, int, int)? wordSelection,
     List<(int, int, int, Color)>? persistentSelection,
     bool forceWhiteTextOnDark = false,
+    bool hideUnrevealedWords = false,
+    Map<int, Color> recitationWordColors = const {},
+    bool usePreciseRecitationOverlay = false,
   }) {
     final glyphColor = forceWhiteTextOnDark ? Colors.white : Colors.black;
 
@@ -543,6 +1185,7 @@ class QpcV4BlackPageView extends StatelessWidget {
             ((bodyStyle.fontSize ?? 23) / refBaseSize);
 
         final uniformAyahScale = _computeBlackUniformAyahScale(
+          page,
           displayLines,
           contentW,
           slotHeight,
@@ -642,15 +1285,20 @@ class QpcV4BlackPageView extends StatelessWidget {
             );
             final lineStyle =
                 getJustifiedLineStyle(line, lineStyleStep, contentW);
+            final lineWidth = mushafMeasureLineWidth(line.lineText, lineStyle);
             final lineContent = _buildBlackAyahLine(
               context: context,
               lineText: line.lineText,
               lineStyle: lineStyle,
               glyphColor: glyphColor,
               isCentered: line.isCentered,
+              lineLayoutWidth: lineWidth,
               ayahSegments: line.ayahSegments,
+              rangeStart: line.rangeStart,
+              hideUnrevealedWords: hideUnrevealedWords,
+              recitationWordColors: recitationWordColors,
+              usePreciseRecitationOverlay: usePreciseRecitationOverlay,
             );
-            final lineWidth = mushafMeasureLineWidth(line.lineText, lineStyle);
             final linePainter = mushafLaidOutRtlLinePainter(
               line.lineText,
               lineStyle,
@@ -661,16 +1309,12 @@ class QpcV4BlackPageView extends StatelessWidget {
               return Padding(
                 padding: EdgeInsets.only(bottom: bodyLinePad),
                 child: Align(
-                  alignment: line.isCentered
-                      ? Alignment.center
-                      : Alignment.centerRight,
+                  alignment: Alignment.center,
                   child: SizedBox(
                     width: double.infinity,
                     height: lineH,
                     child: Align(
-                      alignment: line.isCentered
-                          ? Alignment.topCenter
-                          : Alignment.topRight,
+                      alignment: Alignment.topCenter,
                       child: mushafHighlightLineStackFixed(
                         lineWidth: lineWidth,
                         lineHeight: lineH,
@@ -884,6 +1528,7 @@ class QpcV4BlackPageView extends StatelessWidget {
                         ),
                         onSelectLine: onSelectLine,
                         onClearSelection: onClearSelection,
+                        lineTextHorizontallyCentered: true,
                         uniformAyahScale: uniformAyahScale,
                         hitTestColumnWidth: pageWidth,
                         visualLineIndexOffset: (page == 1 || page == 2) ? 3 : 0,
@@ -942,16 +1587,72 @@ class _QpcV4BlackPageContentStateful extends StatefulWidget {
     required this.baseStyle,
     required this.mapping,
     required this.forceWhiteTextOnDark,
+    required this.hideUnrevealedWords,
+    required this.recitationWordColors,
+    required this.usePreciseRecitationOverlay,
   });
   final int page;
   final List<MushafPageLine> pageLines;
   final TextStyle baseStyle;
   final Map<int, (int sura, int ayah)>? mapping;
   final bool forceWhiteTextOnDark;
+  final bool hideUnrevealedWords;
+  final Map<int, Color> recitationWordColors;
+  final bool usePreciseRecitationOverlay;
 
   @override
   State<_QpcV4BlackPageContentStateful> createState() =>
       _QpcV4BlackPageContentStatefulState();
+}
+
+class _WordToAyahMappingLoaderBlack extends StatefulWidget {
+  const _WordToAyahMappingLoaderBlack({
+    required this.minRange,
+    required this.maxRange,
+    required this.builder,
+  });
+
+  final int minRange;
+  final int maxRange;
+  final Widget Function(Map<int, (int sura, int ayah)>? mapping) builder;
+
+  @override
+  State<_WordToAyahMappingLoaderBlack> createState() =>
+      _WordToAyahMappingLoaderBlackState();
+}
+
+class _WordToAyahMappingLoaderBlackState
+    extends State<_WordToAyahMappingLoaderBlack> {
+  late Future<Map<int, (int sura, int ayah)>> _mappingFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+      widget.minRange,
+      widget.maxRange,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _WordToAyahMappingLoaderBlack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minRange != widget.minRange ||
+        oldWidget.maxRange != widget.maxRange) {
+      _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+        widget.minRange,
+        widget.maxRange,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<int, (int, int)>>(
+      future: _mappingFuture,
+      builder: (_, snapshot) => widget.builder(snapshot.data),
+    );
+  }
 }
 
 class _QpcV4BlackPageContentStatefulState
@@ -1073,6 +1774,9 @@ class _QpcV4BlackPageContentStatefulState
       wordSelection: _wordSelection,
       persistentSelection: _persistentSelection,
       forceWhiteTextOnDark: widget.forceWhiteTextOnDark,
+      hideUnrevealedWords: widget.hideUnrevealedWords,
+      recitationWordColors: widget.recitationWordColors,
+      usePreciseRecitationOverlay: widget.usePreciseRecitationOverlay,
     );
   }
 }

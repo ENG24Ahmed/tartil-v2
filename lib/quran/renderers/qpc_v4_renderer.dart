@@ -3,7 +3,6 @@ import 'dart:math' show min;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:quran_app/audio/ayah_audio_player.dart';
 import 'package:quran_app/quran/ayah_long_press_scope.dart';
@@ -402,7 +401,6 @@ class QpcV4Renderer {
     113: 'سورة الفلق',
     114: 'سورة الناس',
   };
-
   /// [populateRamCache]: عطّله عند التسخين الجماعي للقرص حتى لا يُملأ كاش الرام بكل الصفحات.
   Future<List<MushafPageLine>> loadPage(int page,
       {bool populateRamCache = true}) async {
@@ -564,10 +562,12 @@ Future<List<MushafPageLine>> loadQpcV4PageForDisplay(int page) async {
 }
 
 /// نافذة **صفحتان قبل وبعد**: تقليص كاش الرام ثم تعبئته من القرص + تحميل الخطوط (بعد الإطار، أولوية منخفضة).
-void preloadNearbyPages(int currentPage) {
+void preloadNearbyPages(
+  int currentPage, {
+  int before = PageCache.cacheWindowBefore,
+  int after = PageCache.cacheWindowAfter,
+}) {
   const totalPages = 604;
-  const before = PageCache.cacheWindowBefore;
-  const after = PageCache.cacheWindowAfter;
   WidgetsBinding.instance.addPostFrameCallback((_) {
     SchedulerBinding.instance.scheduleTask<void>(
       () async {
@@ -581,6 +581,23 @@ void preloadNearbyPages(int currentPage) {
         );
         for (var p = currentPage - before; p <= currentPage + after; p++) {
           if (p < 1 || p > totalPages) continue;
+          final lines = PageCache.instance.get('qpc4', p);
+          if (lines != null && lines.isNotEmpty) {
+            int? minR;
+            int? maxR;
+            for (final line in lines) {
+              final rs = line.rangeStart;
+              final re = line.rangeEnd;
+              if (rs == null || re == null) continue;
+              minR = minR == null ? rs : (rs < minR ? rs : minR);
+              maxR = maxR == null ? re : (re > maxR ? re : maxR);
+            }
+            if (minR != null && maxR != null && maxR >= minR) {
+              unawaited(
+                QuranDb.instance.prewarmWordToAyahMapping(minR, maxR),
+              );
+            }
+          }
           await loadQcf4Font(p);
           await Future<void>.delayed(const Duration(milliseconds: 8));
         }
@@ -592,8 +609,17 @@ void preloadNearbyPages(int currentPage) {
 }
 
 class QpcV4PageView extends StatelessWidget {
-  const QpcV4PageView({super.key, required this.page});
+  const QpcV4PageView({
+    super.key,
+    required this.page,
+    this.hideAyahText = false,
+    this.lightweightMode = false,
+    this.mediumQualityMode = false,
+  });
   final int page;
+  final bool hideAyahText;
+  final bool lightweightMode;
+  final bool mediumQualityMode;
 
   static const TextStyle _baseStyle = TextStyle(
     fontSize: 23,
@@ -602,6 +628,8 @@ class QpcV4PageView extends StatelessWidget {
     wordSpacing: 0,
     fontFeatures: [FontFeature.disable('kern')],
   );
+  static const int _v4UniformScaleCacheMaxEntries = 240;
+  static final Map<String, double> _v4UniformScaleCache = <String, double>{};
 
   @override
   Widget build(BuildContext context) {
@@ -609,7 +637,15 @@ class QpcV4PageView extends StatelessWidget {
     if (cached != null && cached.isNotEmpty) {
       return buildAfterQcf4FontLoaded(
         page,
-        () => _buildPageWithMapping(context, page, cached, _baseStyle),
+        () => _buildPageWithMapping(
+          context,
+          page,
+          cached,
+          _baseStyle,
+          hideAyahText: hideAyahText,
+          lightweightMode: lightweightMode,
+          mediumQualityMode: mediumQualityMode,
+        ),
         placeholder: (context) => ColoredBox(
           color: MushafPaperBackgroundScope.of(context),
           child: const SizedBox.expand(),
@@ -641,7 +677,15 @@ class QpcV4PageView extends StatelessWidget {
         if (pageLines.isEmpty) {
           return const Center(child: Text('لا توجد بيانات لهذه الصفحة'));
         }
-        return _buildPageWithMapping(context, page, pageLines, _baseStyle);
+        return _buildPageWithMapping(
+          context,
+          page,
+          pageLines,
+          _baseStyle,
+          hideAyahText: hideAyahText,
+          lightweightMode: lightweightMode,
+          mediumQualityMode: mediumQualityMode,
+        );
       },
     );
   }
@@ -650,8 +694,11 @@ class QpcV4PageView extends StatelessWidget {
     BuildContext context,
     int page,
     List<MushafPageLine> pageLines,
-    TextStyle baseStyle,
-  ) {
+    TextStyle baseStyle, {
+    bool hideAyahText = false,
+    bool lightweightMode = false,
+    bool mediumQualityMode = false,
+  }) {
     int? minR;
     int? maxR;
     for (final line in pageLines) {
@@ -668,18 +715,57 @@ class QpcV4PageView extends StatelessWidget {
     }
     if (minR == null || maxR == null) {
       return _buildContent(
-          context, page, pageLines, baseStyle, null, null, null, null);
+        context,
+        page,
+        pageLines,
+        baseStyle,
+        null,
+        null,
+        null,
+        null,
+        hideAyahText: hideAyahText,
+      );
     }
-    return FutureBuilder<Map<int, (int, int)>>(
-      future: QuranDb.instance.getWordToAyahMapping(minR, maxR),
-      builder: (_, mapSnap) {
-        return _QpcV4PageContentStateful(
-          page: page,
-          pageLines: pageLines,
-          baseStyle: baseStyle,
-          mapping: mapSnap.data,
-        );
-      },
+    if (lightweightMode) {
+      return _buildContent(
+        context,
+        page,
+        pageLines,
+        baseStyle,
+        null,
+        null,
+        null,
+        null,
+        hideAyahText: hideAyahText,
+      );
+    }
+    if (mediumQualityMode) {
+      return _WordToAyahMappingLoader(
+        minRange: minR,
+        maxRange: maxR,
+        builder: (mapping) => _buildContent(
+          context,
+          page,
+          pageLines,
+          baseStyle,
+          mapping,
+          null,
+          null,
+          null,
+          hideAyahText: hideAyahText,
+        ),
+      );
+    }
+    return _WordToAyahMappingLoader(
+      minRange: minR,
+      maxRange: maxR,
+      builder: (mapping) => _QpcV4PageContentStateful(
+        page: page,
+        pageLines: pageLines,
+        baseStyle: baseStyle,
+        mapping: mapping,
+        hideAyahText: hideAyahText,
+      ),
     );
   }
 
@@ -697,12 +783,23 @@ class QpcV4PageView extends StatelessWidget {
 
   /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
   static double _computeV4UniformAyahScale(
+    int page,
     List<MushafPageLine> displayLines,
     double layoutW,
     double slotHeight,
     TextStyle effectiveBaseStyle,
     double lineStyleFontSizeScale,
   ) {
+    final cacheKey = [
+      page,
+      layoutW.toStringAsFixed(2),
+      slotHeight.toStringAsFixed(2),
+      (effectiveBaseStyle.fontSize ?? 23).toStringAsFixed(4),
+      lineStyleFontSizeScale.toStringAsFixed(4),
+    ].join('|');
+    final cached = _v4UniformScaleCache[cacheKey];
+    if (cached != null) return cached;
+
     var minScale = 1.0;
     for (final line in displayLines) {
       if (line.lineType != 'ayah') continue;
@@ -724,6 +821,10 @@ class QpcV4PageView extends StatelessWidget {
       final s = min(1.0, min(sw, sh));
       if (s < minScale) minScale = s;
     }
+    if (_v4UniformScaleCache.length >= _v4UniformScaleCacheMaxEntries) {
+      _v4UniformScaleCache.remove(_v4UniformScaleCache.keys.first);
+    }
+    _v4UniformScaleCache[cacheKey] = minScale;
     return minScale;
   }
 
@@ -740,6 +841,7 @@ class QpcV4PageView extends StatelessWidget {
     void Function()? onClearSelection, {
     (int, int, int)? wordSelection,
     List<(int, int, int, Color)>? persistentSelection,
+    bool hideAyahText = false,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -835,6 +937,7 @@ class QpcV4PageView extends StatelessWidget {
             ((bodyStyle.fontSize ?? 23) / refBaseSize);
 
         final uniformAyahScale = _computeV4UniformAyahScale(
+          page,
           displayLines,
           contentW,
           slotHeight,
@@ -854,6 +957,9 @@ class QpcV4PageView extends StatelessWidget {
               fontSizeScale: lineStyleFontScale);
           final justifiedStyle =
               getJustifiedLineStyle(line, lineStyle, contentW);
+          final renderedStyle = hideAyahText && line.lineType == 'ayah'
+              ? justifiedStyle.copyWith(color: Colors.transparent)
+              : justifiedStyle;
           Widget lineWidget;
           if (line.lineType == 'surah_name') {
             final frameHeight = contentW * _surahFrameAspect;
@@ -884,7 +990,7 @@ class QpcV4PageView extends StatelessWidget {
                             textAlign: TextAlign.center,
                             maxLines: 1,
                             overflow: TextOverflow.visible,
-                            style: justifiedStyle,
+                            style: renderedStyle,
                           ),
                         ),
                       ),
@@ -927,27 +1033,33 @@ class QpcV4PageView extends StatelessWidget {
               lineW,
             );
             final lineH = linePainter.height;
+            // غلاف ثابت لسطر الآية: نفس هيكل الويدجت سواء وُجد تضليل أم لا،
+            // كي لا يقفز السطر للأعلى/الأسفل عند ظهور/اختفاء التضليل
+            // (نفس إصلاح مُصيِّر QPC4 الأسود).
             lineWidget = Padding(
               padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
-                alignment:
-                    line.isCentered ? Alignment.center : Alignment.centerRight,
+                alignment: Alignment.center,
                 child: SizedBox(
                   width: double.infinity,
                   height: lineH,
                   child: Align(
-                    alignment: line.isCentered
-                        ? Alignment.topCenter
-                        : Alignment.topRight,
-                    child: Text(
-                      line.lineText,
-                      textDirection: TextDirection.rtl,
-                      textAlign:
-                          line.isCentered ? TextAlign.center : TextAlign.right,
-                      softWrap: false,
-                      maxLines: 1,
-                      overflow: TextOverflow.visible,
-                      style: justifiedStyle,
+                    alignment: Alignment.topCenter,
+                    child: mushafHighlightLineStackFixed(
+                      lineWidth: lineW,
+                      lineHeight: lineH,
+                      lineText: Text(
+                        line.lineText,
+                        textDirection: TextDirection.rtl,
+                        textAlign: line.isCentered
+                            ? TextAlign.center
+                            : TextAlign.right,
+                        softWrap: false,
+                        maxLines: 1,
+                        overflow: TextOverflow.visible,
+                        style: renderedStyle,
+                      ),
+                      overlayWidgets: const [],
                     ),
                   ),
                 ),
@@ -1042,17 +1154,13 @@ class QpcV4PageView extends StatelessWidget {
             return Padding(
               padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
-                alignment:
-                    line.isCentered ? Alignment.center : Alignment.centerRight,
+                alignment: Alignment.center,
                 child: SizedBox(
                   width: double.infinity,
                   height: painter.height,
                   child: Align(
-                    alignment: line.isCentered
-                        ? Alignment.topCenter
-                        : Alignment.topRight,
-                    child: mushafHighlightFittedLineStack(
-                      lineCentered: line.isCentered,
+                    alignment: Alignment.topCenter,
+                    child: mushafHighlightLineStackFixed(
                       lineWidth: lineWidth,
                       lineHeight: painter.height,
                       lineText: Text(
@@ -1064,7 +1172,7 @@ class QpcV4PageView extends StatelessWidget {
                         softWrap: false,
                         maxLines: 1,
                         overflow: TextOverflow.visible,
-                        style: justifiedStyle,
+                        style: renderedStyle,
                       ),
                       overlayWidgets: overlayWidgets,
                     ),
@@ -1098,17 +1206,13 @@ class QpcV4PageView extends StatelessWidget {
             return Padding(
               padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
-                alignment:
-                    line.isCentered ? Alignment.center : Alignment.centerRight,
+                alignment: Alignment.center,
                 child: SizedBox(
                   width: double.infinity,
                   height: painter.height,
                   child: Align(
-                    alignment: line.isCentered
-                        ? Alignment.topCenter
-                        : Alignment.topRight,
-                    child: mushafHighlightFittedLineStack(
-                      lineCentered: line.isCentered,
+                    alignment: Alignment.topCenter,
+                    child: mushafHighlightLineStackFixed(
                       lineWidth: lineWidth,
                       lineHeight: painter.height,
                       lineText: Text(
@@ -1120,7 +1224,7 @@ class QpcV4PageView extends StatelessWidget {
                         softWrap: false,
                         maxLines: 1,
                         overflow: TextOverflow.visible,
-                        style: justifiedStyle,
+                        style: renderedStyle,
                       ),
                       overlayWidgets: [
                         for (final r in mergedRects)
@@ -1152,17 +1256,13 @@ class QpcV4PageView extends StatelessWidget {
             return Padding(
               padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
-                alignment:
-                    line.isCentered ? Alignment.center : Alignment.centerRight,
+                alignment: Alignment.center,
                 child: SizedBox(
                   width: double.infinity,
                   height: painter.height,
                   child: Align(
-                    alignment: line.isCentered
-                        ? Alignment.topCenter
-                        : Alignment.topRight,
-                    child: mushafHighlightFittedLineStack(
-                      lineCentered: line.isCentered,
+                    alignment: Alignment.topCenter,
+                    child: mushafHighlightLineStackFixed(
                       lineWidth: lineWidth,
                       lineHeight: painter.height,
                       lineText: Text(
@@ -1174,7 +1274,7 @@ class QpcV4PageView extends StatelessWidget {
                         softWrap: false,
                         maxLines: 1,
                         overflow: TextOverflow.visible,
-                        style: justifiedStyle,
+                        style: renderedStyle,
                       ),
                       overlayWidgets: [
                         mushafFlatHighlightBar(
@@ -1250,6 +1350,7 @@ class QpcV4PageView extends StatelessWidget {
                             fontSizeScale: lineStyleFontScale),
                         onSelectLine: onSelectLine,
                         onClearSelection: onClearSelection,
+                        lineTextHorizontallyCentered: true,
                         uniformAyahScale: uniformAyahScale,
                         hitTestColumnWidth: pageWidth,
                         visualLineIndexOffset: (page == 1 || page == 2) ? 3 : 0,
@@ -1313,6 +1414,7 @@ class QpcV4PageView extends StatelessWidget {
     void Function(List<(int lineIndex, int startChar, int endChar)>)?
         onSelectLine,
     void Function()? onClearSelection,
+    bool lineTextHorizontallyCentered = false,
     double uniformAyahScale = 1.0,
     double? hitTestColumnWidth,
     int visualLineIndexOffset = 0,
@@ -1321,6 +1423,7 @@ class QpcV4PageView extends StatelessWidget {
         pageLines, baseStyle, mapping, lineStyleFor,
         onSelectLine: onSelectLine,
         onClearSelection: onClearSelection,
+        lineTextHorizontallyCentered: lineTextHorizontallyCentered,
         uniformAyahScale: uniformAyahScale,
         hitTestColumnWidth: hitTestColumnWidth,
         visualLineIndexOffset: visualLineIndexOffset);
@@ -1385,15 +1488,66 @@ class _QpcV4PageContentStateful extends StatefulWidget {
     required this.pageLines,
     required this.baseStyle,
     required this.mapping,
+    this.hideAyahText = false,
   });
   final int page;
   final List<MushafPageLine> pageLines;
   final TextStyle baseStyle;
   final Map<int, (int sura, int ayah)>? mapping;
+  final bool hideAyahText;
 
   @override
   State<_QpcV4PageContentStateful> createState() =>
       _QpcV4PageContentStatefulState();
+}
+
+class _WordToAyahMappingLoader extends StatefulWidget {
+  const _WordToAyahMappingLoader({
+    required this.minRange,
+    required this.maxRange,
+    required this.builder,
+  });
+
+  final int minRange;
+  final int maxRange;
+  final Widget Function(Map<int, (int sura, int ayah)>? mapping) builder;
+
+  @override
+  State<_WordToAyahMappingLoader> createState() =>
+      _WordToAyahMappingLoaderState();
+}
+
+class _WordToAyahMappingLoaderState extends State<_WordToAyahMappingLoader> {
+  late Future<Map<int, (int sura, int ayah)>> _mappingFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+      widget.minRange,
+      widget.maxRange,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _WordToAyahMappingLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minRange != widget.minRange ||
+        oldWidget.maxRange != widget.maxRange) {
+      _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+        widget.minRange,
+        widget.maxRange,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<int, (int, int)>>(
+      future: _mappingFuture,
+      builder: (_, snapshot) => widget.builder(snapshot.data),
+    );
+  }
 }
 
 class _QpcV4PageContentStatefulState extends State<_QpcV4PageContentStateful> {
@@ -1508,6 +1662,7 @@ class _QpcV4PageContentStatefulState extends State<_QpcV4PageContentStateful> {
       () => setState(() => _selection = null),
       wordSelection: _wordSelection,
       persistentSelection: _persistentSelection,
+      hideAyahText: widget.hideAyahText,
     );
   }
 }

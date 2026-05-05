@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:math' show min;
 
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/physics.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:quran_app/quran/font_loader.dart';
@@ -18,7 +19,6 @@ import 'package:quran_app/quran/compact_line_spacing_scope.dart';
 import 'package:quran_app/quran/mushaf_page_layout.dart';
 import 'package:quran_app/quran/mushaf_ayah_highlight.dart';
 import 'package:quran_app/quran/mushaf_stable_viewport.dart';
-import 'package:quran_app/quran/cache_warmer.dart';
 import 'package:quran_app/audio/ayah_audio_player.dart';
 import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
     show
@@ -39,12 +39,30 @@ import 'package:quran_app/quran/renderers/qpc_v4_renderer.dart'
         preloadNearbyPages;
 
 enum QpcMushafMode { qpc1, qpc4, qpc4Black }
+enum _PageRenderTier { lite, medium, full }
+
+(int min, int max)? _wordRangeFromLines(List<MushafPageLine>? lines) {
+  if (lines == null || lines.isEmpty) return null;
+  int? minR;
+  int? maxR;
+  for (final line in lines) {
+    final rs = line.rangeStart;
+    final re = line.rangeEnd;
+    if (rs == null || re == null) continue;
+    minR = minR == null ? rs : (rs < minR ? rs : minR);
+    maxR = maxR == null ? re : (re > maxR ? re : maxR);
+  }
+  if (minR == null || maxR == null || maxR < minR) return null;
+  return (minR, maxR);
+}
 
 /// تحميل مسبق لـ QPC1: تقليص كاش الرام (صفحتان قبل وبعد) ثم تعبئته من القرص + خطوط مجاورة.
-void preloadNearbyQpc1Pages(int currentPage) {
+void preloadNearbyQpc1Pages(
+  int currentPage, {
+  int before = PageCache.cacheWindowBefore,
+  int after = PageCache.cacheWindowAfter,
+}) {
   const totalPages = 604;
-  const before = PageCache.cacheWindowBefore;
-  const after = PageCache.cacheWindowAfter;
   WidgetsBinding.instance.addPostFrameCallback((_) {
     SchedulerBinding.instance.scheduleTask<void>(
       () async {
@@ -58,6 +76,13 @@ void preloadNearbyQpc1Pages(int currentPage) {
         );
         for (var p = currentPage - before; p <= currentPage + after; p++) {
           if (p < 1 || p > totalPages) continue;
+          final lines = PageCache.instance.get('qpc1', p);
+          final range = _wordRangeFromLines(lines);
+          if (range != null) {
+            unawaited(
+              QuranDb.instance.prewarmWordToAyahMapping(range.$1, range.$2),
+            );
+          }
           await loadQcfFont(p);
           await Future<void>.delayed(const Duration(milliseconds: 8));
         }
@@ -181,14 +206,24 @@ Widget buildQpcPageContent(
   int page,
   QpcMushafMode mode, {
   bool forceWhiteMushafText = false,
+  bool hideAyahText = false,
+  bool lightweightMode = false,
+  bool mediumQualityMode = false,
 }) {
   final Widget inner;
   if (mode == QpcMushafMode.qpc4) {
-    inner = QpcV4PageView(page: page);
+    inner = QpcV4PageView(
+      page: page,
+      hideAyahText: hideAyahText,
+      lightweightMode: lightweightMode,
+      mediumQualityMode: mediumQualityMode,
+    );
   } else if (mode == QpcMushafMode.qpc4Black) {
     inner = QpcV4BlackPageView(
       page: page,
       forceWhiteTextOnDark: forceWhiteMushafText,
+      lightweightMode: lightweightMode,
+      mediumQualityMode: mediumQualityMode,
     );
   } else {
     final cached = tryGetQpcV1FromCache(page);
@@ -197,6 +232,8 @@ Widget buildQpcPageContent(
         page: page,
         pageLines: cached,
         forceWhiteMushafText: forceWhiteMushafText,
+        lightweightMode: lightweightMode,
+        mediumQualityMode: mediumQualityMode,
       );
     } else {
       inner = FutureBuilder<List<MushafPageLine>>(
@@ -228,6 +265,8 @@ Widget buildQpcPageContent(
             page: page,
             pageLines: pageLines,
             forceWhiteMushafText: forceWhiteMushafText,
+            lightweightMode: lightweightMode,
+            mediumQualityMode: mediumQualityMode,
           );
         },
       );
@@ -245,10 +284,14 @@ class _QpcV1PageFromLinesWidget extends StatelessWidget {
     required this.page,
     required this.pageLines,
     required this.forceWhiteMushafText,
+    this.lightweightMode = false,
+    this.mediumQualityMode = false,
   });
   final int page;
   final List<MushafPageLine> pageLines;
   final bool forceWhiteMushafText;
+  final bool lightweightMode;
+  final bool mediumQualityMode;
 
   @override
   Widget build(BuildContext context) {
@@ -257,92 +300,83 @@ class _QpcV1PageFromLinesWidget extends StatelessWidget {
       page,
       pageLines,
       forceWhiteMushafText: forceWhiteMushafText,
-    );
-  }
-}
-
-/// فيزياء تقليب سلسة: عتبة 50%، زنبرك ناعم، بدون حد لصفحة واحدة (يسبب طفرة).
-class _SmoothPageScrollPhysics extends PageScrollPhysics {
-  const _SmoothPageScrollPhysics({super.parent});
-
-  @override
-  _SmoothPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return _SmoothPageScrollPhysics(parent: buildParent(ancestor));
-  }
-
-  @override
-  Simulation? createBallisticSimulation(
-      ScrollMetrics position, double velocity) {
-    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
-        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
-      return super.createBallisticSimulation(position, velocity);
-    }
-    final viewport = position.viewportDimension;
-    if (viewport <= 0)
-      return super.createBallisticSimulation(position, velocity);
-    final page = position.pixels / viewport;
-    final targetPage =
-        page.roundToDouble().clamp(0.0, position.maxScrollExtent / viewport);
-    final target = (targetPage * viewport)
-        .clamp(position.minScrollExtent, position.maxScrollExtent);
-    final tolerance = toleranceFor(position);
-    return ScrollSpringSimulation(
-      const SpringDescription(mass: 0.5, stiffness: 80, damping: 1.0),
-      position.pixels,
-      target,
-      velocity,
-      tolerance: tolerance,
+      lightweightMode: lightweightMode,
+      mediumQualityMode: mediumQualityMode,
     );
   }
 }
 
 /// طبقة لا تشارك في ساحة الإيماءات — تكتشف النقرة عبر Listener فقط حتى لا يمنع السحب الأول.
-class _TapOverlay extends StatefulWidget {
+class _TapOverlay extends StatelessWidget {
   const _TapOverlay({required this.onTap});
   final VoidCallback onTap;
 
   @override
-  State<_TapOverlay> createState() => _TapOverlayState();
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: onTap,
+      child: const SizedBox.expand(),
+    );
+  }
 }
 
-class _TapOverlayState extends State<_TapOverlay> {
-  Offset? _down;
-  DateTime? _downTime;
-  static const double _tapSlop = 18;
-  static const Duration _tapMaxDuration = Duration(milliseconds: 300);
+/// فيزياء تقليب احترافية: استجابة أسرع للمسافة/السرعة مع توقف طبيعي على الصفحة.
+class _ProfessionalPageScrollPhysics extends PageScrollPhysics {
+  const _ProfessionalPageScrollPhysics({super.parent});
 
-  void _onPointerDown(PointerDownEvent e) {
-    _down = e.position;
-    _downTime = DateTime.now();
-  }
+  // Thresholds tuned for faster, more "native app" page turning.
+  static const double _kTurnPageThresholdSlow = 0.33;
+  static const double _kTurnPageThresholdFast = 0.18;
+  static const double _kMinFlingVelocity = 210.0;
+  static const double _kVelocityPageBias = 0.40;
 
-  void _onPointerUp(PointerUpEvent e) {
-    final down = _down;
-    final downTime = _downTime;
-    _down = null;
-    _downTime = null;
-    if (down == null || downTime == null) return;
-    final dx = (e.position.dx - down.dx).abs();
-    final dy = (e.position.dy - down.dy).abs();
-    final duration = DateTime.now().difference(downTime);
-    if (dx <= _tapSlop && dy <= _tapSlop && duration <= _tapMaxDuration) {
-      widget.onTap();
-    }
-  }
-
-  void _onPointerCancel(PointerCancelEvent _) {
-    _down = null;
-    _downTime = null;
+  @override
+  _ProfessionalPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _ProfessionalPageScrollPhysics(parent: buildParent(ancestor));
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _onPointerDown,
-      onPointerUp: _onPointerUp,
-      onPointerCancel: _onPointerCancel,
-      child: const SizedBox.expand(),
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final viewport = position.viewportDimension;
+    if (viewport <= 0.0) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+
+    final page = position.pixels / viewport;
+    final fastFling = velocity.abs() >= _kMinFlingVelocity;
+    final biasedPage =
+        fastFling ? page + velocity.sign * _kVelocityPageBias : page;
+    final base = biasedPage.floorToDouble();
+    final fraction = biasedPage - base;
+    final threshold =
+        fastFling ? _kTurnPageThresholdFast : _kTurnPageThresholdSlow;
+    var targetPage = fraction >= threshold ? base + 1.0 : base;
+
+    final minPage = position.minScrollExtent / viewport;
+    final maxPage = position.maxScrollExtent / viewport;
+    targetPage = targetPage.clamp(minPage, maxPage);
+    final targetPixels = targetPage * viewport;
+
+    final tolerance = toleranceFor(position);
+    if ((targetPixels - position.pixels).abs() < tolerance.distance &&
+        velocity.abs() < tolerance.velocity) {
+      return null;
+    }
+
+    return ScrollSpringSimulation(
+      spring,
+      position.pixels,
+      targetPixels,
+      velocity,
+      tolerance: tolerance,
     );
   }
 }
@@ -397,6 +431,13 @@ class _QuranReaderState extends State<QuranReader> {
   late int _currentPageIndex;
   bool _dbReady = false;
   String? _initError;
+  bool _isDraggingPages = false;
+  Timer? _dragSettleTimer;
+  Timer? _qualityTierTimer;
+  double? _lastDragPixels;
+  int? _lastDragSampleUs;
+  double _recentDragVelocityPxPerSec = 0.0;
+  _PageRenderTier _renderTier = _PageRenderTier.full;
   QpcMushafMode _mode = QpcMushafMode.qpc4;
 
   QpcMushafMode get _effectiveMode => widget.mode ?? _mode;
@@ -426,17 +467,35 @@ class _QuranReaderState extends State<QuranReader> {
       final pageNum = _currentPageIndex + 1;
       if (_effectiveMode == QpcMushafMode.qpc4 ||
           _effectiveMode == QpcMushafMode.qpc4Black) {
-        preloadNearbyPages(pageNum);
+        final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
+        preloadNearbyPages(pageNum, before: radius, after: radius);
       } else if (_effectiveMode == QpcMushafMode.qpc1) {
-        _preloadV1Pages(pageNum);
+        final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
+        _preloadV1Pages(pageNum, before: radius, after: radius);
       }
     });
   }
 
   @override
   void dispose() {
+    _dragSettleTimer?.cancel();
+    _qualityTierTimer?.cancel();
     if (_ownsController) _pageController.dispose();
     super.dispose();
+  }
+
+  int _preloadRadiusForCurrentDrag() {
+    final v = _recentDragVelocityPxPerSec.abs();
+    if (v >= 3200) return 8;
+    if (v >= 2200) return 6;
+    if (v >= 1200) return 5;
+    if (v >= 700) return 4;
+    return 3;
+  }
+
+  void _setRenderTier(_PageRenderTier tier) {
+    if (_renderTier == tier) return;
+    setState(() => _renderTier = tier);
   }
 
   Future<void> _initDb() async {
@@ -449,8 +508,8 @@ class _QuranReaderState extends State<QuranReader> {
         });
         widget.onReady?.call();
       }
-      // تسخين مسبق لكامل المصحف في الخلفية — مرة واحدة فقط عند أول تثبيت
-      Future(() => CacheWarmer.instance.warmAll());
+      // إيقاف التسخين الشامل التلقائي لأنه يسبب ضغط I/O ملحوظًا أثناء التقليب.
+      // التحميل القريب + كاش الرام/القرص يكفيان للسلاسة دون عبء الخلفية الكبير.
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -461,7 +520,12 @@ class _QuranReaderState extends State<QuranReader> {
     }
   }
 
-  void _preloadV1Pages(int currentPage) => preloadNearbyQpc1Pages(currentPage);
+  void _preloadV1Pages(
+    int currentPage, {
+    int before = PageCache.cacheWindowBefore,
+    int after = PageCache.cacheWindowAfter,
+  }) =>
+      preloadNearbyQpc1Pages(currentPage, before: before, after: after);
 
   void _goBackToMain() {
     if (!mounted) return;
@@ -518,6 +582,8 @@ class _QuranReaderState extends State<QuranReader> {
   static const double _linePaddingBottom = 0.32;
 
   static const String _arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  static const int _v1UniformScaleCacheMaxEntries = 240;
+  static final Map<String, double> _v1UniformScaleCache = <String, double>{};
   static String _toArabicDigits(int value) {
     return value.toString().replaceAllMapped(
         RegExp(r'\d'), (m) => _arabicDigits[int.parse(m.group(0)!)]);
@@ -746,6 +812,8 @@ class _QuranReaderState extends State<QuranReader> {
     int page,
     List<MushafPageLine> pageLines, {
     bool forceWhiteMushafText = false,
+    bool lightweightMode = false,
+    bool mediumQualityMode = false,
   }) {
     int? minR;
     int? maxR;
@@ -788,22 +856,57 @@ class _QuranReaderState extends State<QuranReader> {
             useWhiteTextOnDark: forceWhiteMushafText,
           );
         }
-        return FutureBuilder<Map<int, (int, int)>>(
-          future: QuranDb.instance.getWordToAyahMapping(minR, maxR),
-          builder: (_, mapSnap) => _V1PageContentStateful(
+        if (lightweightMode) {
+          return _buildV1PageContentStatic(
+            context,
+            constraints,
+            page,
+            null,
+            pageLines,
+            null,
+            null,
+            null,
+            null,
+            null,
+            useWhiteTextOnDark: forceWhiteMushafText,
+          );
+        }
+        if (mediumQualityMode) {
+          return _WordToAyahMappingLoaderV1(
+            minRange: minR,
+            maxRange: maxR,
+            builder: (mapping) => _buildV1PageContentStatic(
+              context,
+              constraints,
+              page,
+              mapping,
+              pageLines,
+              null,
+              null,
+              null,
+              null,
+              null,
+              useWhiteTextOnDark: forceWhiteMushafText,
+            ),
+          );
+        }
+        return _WordToAyahMappingLoaderV1(
+          minRange: minR,
+          maxRange: maxR,
+          builder: (mapping) => _V1PageContentStateful(
             constraints: constraints,
             page: page,
             contentW: contentW,
             contentH: contentH,
             lineHeights: lineHeights,
             pageLines: pageLines,
-            mapping: mapSnap.data,
+            mapping: mapping,
             buildContent: (ctx, sel, persistentSel, wordSel, onS, onC) =>
                 _buildV1PageContentStatic(
               ctx,
               constraints,
               page,
-              mapSnap.data,
+              mapping,
               pageLines,
               sel,
               persistentSel,
@@ -820,6 +923,7 @@ class _QuranReaderState extends State<QuranReader> {
 
   /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
   static double _computeV1UniformAyahScale(
+    int page,
     List<MushafPageLine> displayLines,
     double layoutW,
     double slotHeight,
@@ -827,6 +931,17 @@ class _QuranReaderState extends State<QuranReader> {
     double? ayahLineHeight,
     bool useWhiteTextOnDark,
   ) {
+    final cacheKey = [
+      page,
+      layoutW.toStringAsFixed(2),
+      slotHeight.toStringAsFixed(2),
+      fontSizeScale.toStringAsFixed(4),
+      (ayahLineHeight ?? 0).toStringAsFixed(4),
+      useWhiteTextOnDark ? '1' : '0',
+    ].join('|');
+    final cached = _v1UniformScaleCache[cacheKey];
+    if (cached != null) return cached;
+
     var minScale = 1.0;
     for (final line in displayLines) {
       if (line.lineType != 'ayah') continue;
@@ -851,6 +966,10 @@ class _QuranReaderState extends State<QuranReader> {
       final s = min(1.0, min(sw, sh));
       if (s < minScale) minScale = s;
     }
+    if (_v1UniformScaleCache.length >= _v1UniformScaleCacheMaxEntries) {
+      _v1UniformScaleCache.remove(_v1UniformScaleCache.keys.first);
+    }
+    _v1UniformScaleCache[cacheKey] = minScale;
     return minScale;
   }
 
@@ -943,6 +1062,7 @@ class _QuranReaderState extends State<QuranReader> {
       bodyLinePad *= squeeze;
     }
     final uniformAyahScale = _computeV1UniformAyahScale(
+      page,
       displayLines,
       scaledW,
       slotHeight,
@@ -1320,8 +1440,8 @@ class _QuranReaderState extends State<QuranReader> {
         preferCaretHorizontalBounds: v1WordSpacingJustified,
       );
       if (rect != null && rect.width > 0.01) {
-        persistentRects
-            .add((left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
+        persistentRects.add(
+            (left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
       }
     }
     final mergedPersistentRects =
@@ -1451,8 +1571,8 @@ class _QuranReaderState extends State<QuranReader> {
           preferCaretHorizontalBounds: v1WordSpacingJustified,
         );
         if (rect != null && rect.width > 0.01) {
-          persistentRects
-              .add((left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
+          persistentRects.add(
+              (left: rect.left + leftAdjust, width: rect.width, color: sel.$4));
         }
       }
       for (final r in _mergeV1PersistentRectsByColor(persistentRects)) {
@@ -1600,54 +1720,109 @@ class _QuranReaderState extends State<QuranReader> {
   Widget _buildBody() {
     return Stack(
       children: [
-        PageView.builder(
-          itemCount: totalPages,
-          controller: _pageController,
-          reverse: false,
-          physics: const _SmoothPageScrollPhysics(),
-          allowImplicitScrolling: true,
-          onPageChanged: (index) {
-            setState(() => _currentPageIndex = index);
-            widget.onPageChanged?.call(index + 1);
-            final pageNum = index + 1;
-            PageCache.instance.trimRamToNearbyPages(pageNum);
-            if (_effectiveMode == QpcMushafMode.qpc4 ||
-                _effectiveMode == QpcMushafMode.qpc4Black) {
-              preloadNearbyPages(pageNum);
-            } else if (_effectiveMode == QpcMushafMode.qpc1) {
-              _preloadV1Pages(pageNum);
+        NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n is ScrollStartNotification && n.dragDetails != null) {
+              _dragSettleTimer?.cancel();
+              _qualityTierTimer?.cancel();
+              _lastDragPixels = n.metrics.pixels;
+              _lastDragSampleUs = DateTime.now().microsecondsSinceEpoch;
+              if (!_isDraggingPages) {
+                setState(() => _isDraggingPages = true);
+              }
+              _setRenderTier(_PageRenderTier.lite);
+            } else if (n is ScrollUpdateNotification) {
+              final nowUs = DateTime.now().microsecondsSinceEpoch;
+              final lastPx = _lastDragPixels;
+              final lastUs = _lastDragSampleUs;
+              if (lastPx != null && lastUs != null) {
+                final dtUs = nowUs - lastUs;
+                if (dtUs > 0) {
+                  final v =
+                      ((n.metrics.pixels - lastPx).abs() * 1000000.0) / dtUs;
+                  _recentDragVelocityPxPerSec =
+                      (_recentDragVelocityPxPerSec * 0.65) + (v * 0.35);
+                }
+              }
+              _lastDragPixels = n.metrics.pixels;
+              _lastDragSampleUs = nowUs;
+            } else if (n is ScrollEndNotification ||
+                (n is UserScrollNotification &&
+                    n.direction == ScrollDirection.idle)) {
+              _lastDragPixels = null;
+              _lastDragSampleUs = null;
+              _dragSettleTimer?.cancel();
+              _dragSettleTimer = Timer(const Duration(milliseconds: 160), () {
+                if (!mounted) return;
+                if (_isDraggingPages) {
+                  setState(() => _isDraggingPages = false);
+                }
+                _qualityTierTimer?.cancel();
+                _setRenderTier(_PageRenderTier.medium);
+                _qualityTierTimer = Timer(const Duration(milliseconds: 180), () {
+                  if (!mounted) return;
+                  _setRenderTier(_PageRenderTier.full);
+                });
+              });
             }
+            return false;
           },
-          itemBuilder: (context, index) {
-            final page = index + 1;
-            final pageContent = buildQpcPageContent(
-              context,
-              page,
-              _effectiveMode,
-              forceWhiteMushafText: widget.forceWhiteMushafText,
-            );
-            final wrappedContent = RepaintBoundary(child: pageContent);
-            if (widget.buildTopBarForPage != null) {
-              if (_effectiveMode == QpcMushafMode.qpc1 ||
-                  _effectiveMode == QpcMushafMode.qpc4 ||
+          child: PageView.builder(
+            dragStartBehavior: DragStartBehavior.down,
+            itemCount: totalPages,
+            controller: _pageController,
+            reverse: false,
+            physics: const _ProfessionalPageScrollPhysics(),
+            allowImplicitScrolling: false,
+            onPageChanged: (index) {
+              setState(() => _currentPageIndex = index);
+              widget.onPageChanged?.call(index + 1);
+              final pageNum = index + 1;
+              PageCache.instance.trimRamToNearbyPages(pageNum);
+              if (_effectiveMode == QpcMushafMode.qpc4 ||
                   _effectiveMode == QpcMushafMode.qpc4Black) {
+                final radius =
+                    _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
+                preloadNearbyPages(pageNum, before: radius, after: radius);
+              } else if (_effectiveMode == QpcMushafMode.qpc1) {
+                final radius =
+                    _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
+                _preloadV1Pages(pageNum, before: radius, after: radius);
+              }
+            },
+            itemBuilder: (context, index) {
+              final page = index + 1;
+              final pageContent = buildQpcPageContent(
+                context,
+                page,
+                _effectiveMode,
+                forceWhiteMushafText: widget.forceWhiteMushafText,
+                lightweightMode: _renderTier == _PageRenderTier.lite,
+                mediumQualityMode: _renderTier == _PageRenderTier.medium,
+              );
+              final wrappedContent = RepaintBoundary(child: pageContent);
+              if (widget.buildTopBarForPage != null) {
+                if (_effectiveMode == QpcMushafMode.qpc1 ||
+                    _effectiveMode == QpcMushafMode.qpc4 ||
+                    _effectiveMode == QpcMushafMode.qpc4Black) {
+                  return Column(
+                    children: [
+                      widget.buildTopBarForPage!(page),
+                      Expanded(child: wrappedContent),
+                      _buildV1PageNumberRow(page),
+                    ],
+                  );
+                }
                 return Column(
                   children: [
                     widget.buildTopBarForPage!(page),
                     Expanded(child: wrappedContent),
-                    _buildV1PageNumberRow(page),
                   ],
                 );
               }
-              return Column(
-                children: [
-                  widget.buildTopBarForPage!(page),
-                  Expanded(child: wrappedContent),
-                ],
-              );
-            }
-            return wrappedContent;
-          },
+              return wrappedContent;
+            },
+          ),
         ),
         Positioned.fill(
           child: _TapOverlay(
@@ -1776,9 +1951,65 @@ class _V1PageContentStateful extends StatefulWidget {
   State<_V1PageContentStateful> createState() => _V1PageContentStatefulState();
 }
 
+class _WordToAyahMappingLoaderV1 extends StatefulWidget {
+  const _WordToAyahMappingLoaderV1({
+    required this.minRange,
+    required this.maxRange,
+    required this.builder,
+  });
+
+  final int minRange;
+  final int maxRange;
+  final Widget Function(Map<int, (int sura, int ayah)>? mapping) builder;
+
+  @override
+  State<_WordToAyahMappingLoaderV1> createState() =>
+      _WordToAyahMappingLoaderV1State();
+}
+
+class _WordToAyahMappingLoaderV1State
+    extends State<_WordToAyahMappingLoaderV1> {
+  late Future<Map<int, (int sura, int ayah)>> _mappingFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+      widget.minRange,
+      widget.maxRange,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _WordToAyahMappingLoaderV1 oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minRange != widget.minRange ||
+        oldWidget.maxRange != widget.maxRange) {
+      _mappingFuture = QuranDb.instance.getWordToAyahMapping(
+        widget.minRange,
+        widget.maxRange,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<int, (int, int)>>(
+      future: _mappingFuture,
+      builder: (_, snapshot) => widget.builder(snapshot.data),
+    );
+  }
+}
+
 class _V1PageContentStatefulState extends State<_V1PageContentStateful> {
   List<(int, int, int)>? _selection;
   List<(int, int, int, Color)>? _persistentSelection;
+  int? _lastAudioSura;
+  int? _lastAudioAyah;
+  int _lastAudioSegmentIndex = -1;
+  int? _lastAudioSegmentToken;
+  bool _lastAudioActive = false;
+  bool _lastAudioShowAyahHighlight = false;
 
   @override
   void initState() {
@@ -1801,7 +2032,23 @@ class _V1PageContentStatefulState extends State<_V1PageContentStateful> {
     _syncPersistentHighlights();
   }
 
-  void _onAudioChanged() => setState(() {});
+  void _onAudioChanged() {
+    final player = AyahAudioPlayer.instance;
+    final sameState = _lastAudioSura == player.currentSura &&
+        _lastAudioAyah == player.currentAyah &&
+        _lastAudioSegmentIndex == player.currentSegmentIndex &&
+        _lastAudioSegmentToken == player.currentSegmentToken &&
+        _lastAudioActive == player.isActive &&
+        _lastAudioShowAyahHighlight == player.showAyahHighlight;
+    if (sameState) return;
+    _lastAudioSura = player.currentSura;
+    _lastAudioAyah = player.currentAyah;
+    _lastAudioSegmentIndex = player.currentSegmentIndex;
+    _lastAudioSegmentToken = player.currentSegmentToken;
+    _lastAudioActive = player.isActive;
+    _lastAudioShowAyahHighlight = player.showAyahHighlight;
+    setState(() {});
+  }
 
   void _syncPersistentHighlights() {
     final mapping = widget.mapping;

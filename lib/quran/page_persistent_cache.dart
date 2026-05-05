@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -76,10 +77,8 @@ class PagePersistentCache {
       final path = _pagePath(mode, page);
       final file = File(path);
       if (!await file.exists()) return null;
-      final json = jsonDecode(await file.readAsString()) as List;
-      return json
-          .map((e) => MushafPageLine.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final raw = await file.readAsString();
+      return compute(_decodeMushafLinesFromJson, raw);
     } catch (_) {
       return null;
     }
@@ -176,4 +175,11 @@ class PagePersistentCache {
       }
     } catch (_) {}
   }
+}
+
+List<MushafPageLine> _decodeMushafLinesFromJson(String raw) {
+  final json = jsonDecode(raw) as List;
+  return json
+      .map((e) => MushafPageLine.fromJson(e as Map<String, dynamic>))
+      .toList();
 }

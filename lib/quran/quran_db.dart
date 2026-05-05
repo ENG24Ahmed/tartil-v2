@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// نسخ وفتح قاعدة quran-data.sqlite مع دعم Windows (FFI) و Android.
@@ -14,6 +13,9 @@ class QuranDb {
   static const String _assetPath = 'assets/database/quran-data.sqlite';
 
   Database? _db;
+  static const int _mappingCacheMaxEntries = 800;
+  final Map<String, Map<int, (int, int)>> _wordToAyahCache = {};
+  final Map<String, Future<Map<int, (int, int)>>> _wordToAyahInFlight = {};
 
   Database get db {
     if (_db == null) throw StateError('QuranDb not initialized. Call init() first.');
@@ -153,6 +155,26 @@ class QuranDb {
   /// ربط word_number_all → (surah_number, ayah_number) لنطاق كلمات (لنسخ الآية عند الضغط المطول).
   /// الاستعلام: SELECT word_number_all, surah_number, ayah_number FROM words WHERE ...
   Future<Map<int, (int sura, int ayah)>> getWordToAyahMapping(int minId, int maxId) async {
+    final key = '$minId:$maxId';
+    final cached = _wordToAyahCache[key];
+    if (cached != null) return cached;
+    final pending = _wordToAyahInFlight[key];
+    if (pending != null) return pending;
+
+    final fut = _queryWordToAyahMapping(minId, maxId).whenComplete(() {
+      _wordToAyahInFlight.remove(key);
+    });
+    _wordToAyahInFlight[key] = fut;
+    final out = await fut;
+    if (_wordToAyahCache.length >= _mappingCacheMaxEntries) {
+      _wordToAyahCache.remove(_wordToAyahCache.keys.first);
+    }
+    _wordToAyahCache[key] = out;
+    return out;
+  }
+
+  Future<Map<int, (int sura, int ayah)>> _queryWordToAyahMapping(
+      int minId, int maxId) async {
     final out = <int, (int, int)>{};
     try {
       await init();
@@ -171,6 +193,11 @@ class QuranDb {
       }
     } catch (_) {}
     return out;
+  }
+
+  Future<void> prewarmWordToAyahMapping(int minId, int maxId) async {
+    if (minId <= 0 || maxId < minId) return;
+    await getWordToAyahMapping(minId, maxId);
   }
 
   /// نطاق word_number_all لآية معينة (للعثور على السطر الذي يحتويها في التخطيط).
