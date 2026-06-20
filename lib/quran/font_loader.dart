@@ -1,9 +1,11 @@
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 final Set<String> _loadedFonts = <String>{};
+
+// كاش للـ Future لكل صفحة — يمنع FutureBuilder من إعادة تشغيل العمل عند كل rebuild
+final Map<int, Future<void>> _qcf4FontFutures = {};
 
 /// Loads a single legacy QCF_P page font (1..604). يجرب .ttf ثم .TTF.
 Future<void> loadQcfFont(int page) async {
@@ -53,19 +55,21 @@ Widget buildAfterQcf4FontLoaded(
     return builder();
   }
   return FutureBuilder<void>(
-    future: loadQcf4Font(page),
+    // Fix 3: نفس كائن Future في كل rebuild — FutureBuilder لن يُعيد تشغيل التحميل
+    future: _qcf4FontFutures.putIfAbsent(page, () => loadQcf4Font(page)),
     builder: (context, snapshot) {
       if (snapshot.connectionState != ConnectionState.done) {
         return placeholder?.call(context) ?? const SizedBox.expand();
       }
       if (snapshot.hasError) {
-        return Center(
+        debugPrint('QCF4 font load failed: ${snapshot.error}');
+        return const Center(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.all(24),
             child: Text(
-              'فشل تحميل الخط: ${snapshot.error}',
+              'تعذّر تحميل الخط. أعد المحاولة.',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16),
+              style: TextStyle(fontSize: 16),
             ),
           ),
         );

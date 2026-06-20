@@ -2,7 +2,7 @@ name: quran_app
 description: Quran app using hafs_smart_v8 dataset.
 publish_to: 'none'
 
-version: 2.1.20+8
+version: 3.3.11+10
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -73,6 +73,9 @@ flutter:
     - family: KFGQPCHAFSUthmanicScript
       fonts:
         - asset: assets/fonts/KFGQPCHAFSUthmanicScript-Regula.ttf
+    - family: ScheherazadeNew
+      fonts:
+        - asset: assets/fonts/ScheherazadeNew-Regular.ttf
     - family: TafsirFontGlassFlowers3D
       fonts:
         - asset: assets/fonts/fonttafser/alfont_com_Glass-Flowers-3D-1.otf

@@ -120,6 +120,7 @@ void _mushafMergeTextBoxesIntoSpan(
   required TextStyle style,
   required int startChar,
   required int endChar,
+
   /// عرض صندوق السطر لمحاذاة يمين RTL عند فشل الصناديق (لا يُستخدم مع التبرير).
   double? rtlRightAlignedLayoutWidth,
   bool rtlRightAlignedLayoutWidthIsMeaningful = false,
@@ -158,7 +159,8 @@ void _mushafMergeTextBoxesIntoSpan(
   }
 
   if (preferCaretHorizontalBounds) {
-    final fromCarets = _mushafHighlightSpanFromCaretAffinities(painter, start, end);
+    final fromCarets =
+        _mushafHighlightSpanFromCaretAffinities(painter, start, end);
     if (fromCarets != null) {
       return fromCarets;
     }
@@ -171,7 +173,8 @@ void _mushafMergeTextBoxesIntoSpan(
     if (fromBoxes != null) {
       return fromBoxes;
     }
-    final fromCarets = _mushafHighlightSpanFromCaretAffinities(painter, start, end);
+    final fromCarets =
+        _mushafHighlightSpanFromCaretAffinities(painter, start, end);
     if (fromCarets != null) {
       return fromCarets;
     }
@@ -270,8 +273,7 @@ Widget mushafHighlightFittedLineStack({
   required Widget lineText,
   required List<Widget> overlayWidgets,
 }) {
-  final align =
-      lineCentered ? Alignment.topCenter : Alignment.topRight;
+  final align = lineCentered ? Alignment.topCenter : Alignment.topRight;
   final core = SizedBox(
     width: lineWidth,
     height: lineHeight,

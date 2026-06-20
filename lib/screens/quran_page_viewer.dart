@@ -15,6 +15,7 @@ import '../audio/ayah_reciters_config.dart';
 import '../audio/ayah_reciters_prefs.dart';
 import '../quran/ayah_highlight_persistence.dart';
 import '../quran/ayah_highlight_range_sheet.dart';
+import '../quran/temporary_search_ayah_highlight.dart';
 import '../quran/ayah_long_press_menu_dialog.dart';
 import '../quran/ayah_long_press_scope.dart';
 import '../quran/quran_menu_palette.dart';
@@ -51,11 +52,15 @@ import '../services/qpc_glyph_db.dart';
 import '../features/developer/developer_options_screen.dart';
 import '../quran/page_background_loader.dart';
 import '../onboarding/mushaf_intro_prefs.dart';
+import '../recitation/native_speech_service.dart';
 import '../recitation/recitation_screen.dart';
+import '../recitation/voice_ayah_search_service.dart';
 import '../widgets/mushaf_intro_overlay.dart';
 import '../quran/ayah_highlights_main_menu_flow.dart';
 import '../quran/nested_quran_menu_app_bar.dart';
 import '../quran/quran_menu_sheet_host.dart';
+import '../khatm/khatm_setup_sheet.dart';
+import '../dhikr_counter/dhikr_counter_screen.dart';
 
 /// مسار منزلق LTR مع عكس القيمة: اللون النشط من الإبهام حتى **يمين** المسار
 /// (أصغر حجم خط منطقيًا على اليمين).
@@ -240,6 +245,22 @@ _ArabicUiFontChoice? _arabicUiFontChoiceForId(String id) {
     if (c.id == id) return c;
   }
   return null;
+}
+
+/// رسالة عربية للمستخدم عند فشل البحث الصوتي (بدون نصوص native تقنية).
+String _voiceSearchErrorForEvent({String? code, bool permissionDenied = false}) {
+  if (permissionDenied) {
+    return 'يحتاج التطبيق إلى صلاحية الميكروفون. فعّلها من إعدادات الجهاز ثم أعد المحاولة.';
+  }
+  switch (code) {
+    case 'network':
+    case 'network_timeout':
+    case 'server':
+    case 'server_disconnected':
+      return 'تعذّر الاتصال بخدمة التعرف على الصوت. تحقق من الإنترنت وحاول مرة أخرى.';
+    default:
+      return 'تعذّر تشغيل البحث الصوتي. تأكد من صلاحية الميكروفون واتصال الإنترنت.';
+  }
 }
 
 class QuranPageViewer extends StatefulWidget {
@@ -431,15 +452,15 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   int _currentPageIndex = 0;
   bool _longScrollNeedsInitialJump = false;
   bool _standardNeedsInitialJump = false;
-  bool _lightweightMushafDuringScroll = false;
-  bool _mediumQualityMushafAfterScroll = false;
-  Timer? _mushafRenderTierTimer;
   Timer? _inactivityTimer;
   Timer? _saveCurrentPageDebounce;
   Timer? _preloadDebounce;
+  Timer? _mushafRenderTierTimer;
   int? _pendingPreloadPage;
   int? _pendingCurrentPageSave;
   SharedPreferences? _sharedPrefsCache;
+  final ValueNotifier<bool> _liteScrollNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _mediumScrollNotifier = ValueNotifier(false);
   static const Duration _inactivityDuration = Duration(minutes: 30);
 
   static const _keyCurrentPage = 'current_page';
@@ -597,7 +618,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   }
 
   static const double _longScrollBarIconRowH = 44;
-  static const double _longScrollBarCaptionH = 26;
+  static const double _longScrollBarCaptionH = 32;
+  static const double _longScrollBarCaptionFontSize = 14;
+  static const double _longScrollBarSpeedPercentFontSize = 20;
   static const double _longScrollBarIconSize = 26;
   static const double _longScrollBarBetweenGroups = 6;
   static const double _longScrollBarSpeedIconMin = 40;
@@ -607,7 +630,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     final atMin = _autoScrollSpeedStepIndex <= 0;
     final atMax = _autoScrollSpeedStepIndex >= 18;
     const green = Color(0xFF2E7D32);
-    const percentFontSize = 17.0;
+    const percentFontSize = _longScrollBarSpeedPercentFontSize;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -642,7 +665,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                       style: _menuQuranStyle(
                         fontSize: percentFontSize,
                         color: const Color(0xFF1B5E20),
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
@@ -674,9 +697,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: _menuQuranStyle(
-                fontSize: 11,
+                fontSize: _longScrollBarCaptionFontSize,
                 color: const Color(0xFF1B5E20),
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -700,6 +723,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   List<AyahRangeHighlight> _ayahHighlights = [];
   bool _ayahHighlightsVisible = true;
 
+  static const Duration _searchAyahHighlightVisibleDuration =
+      Duration(milliseconds: 3000);
+  static const Duration _searchAyahHighlightFadeDuration =
+      Duration(milliseconds: 600);
+  Timer? _searchAyahHighlightHoldTimer;
+  AnimationController? _searchAyahHighlightFadeController;
+
   /// مضاعف حجم خط القوائم والنوافذ (ما عدا شريط صفحة المصحف).
   double _menuFontScale = 1.0;
 
@@ -712,12 +742,52 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   /// واجهة القوائم والنوافذ: داكن (أسود مخضر) أو فاتح.
   bool _menuDarkMode = false;
 
+  /// يُزاد عند تغيّر مظهر القوائم (داكن/فاتح، خط، تضليل…) لإعادة بناء الأوراق المفتوحة.
+  final ValueNotifier<int> _menuUiGeneration = ValueNotifier(0);
+
+  static const Color _kMenuSheetChrome = Colors.transparent;
+
   /// عند التفعيل: الخمول يوسّع الكاش تدريجياً حتى كامل المصحف (مع الإيقاف باللمس).
   /// عند الإطفاء: الخمول يحمّل 7 صفحات فقط بعد الصفحة الحالية.
   bool _fullMushafBackgroundWarmup = false;
 
   QuranMenuPaletteData get _menuPal =>
       _menuDarkMode ? QuranMenuPaletteData.dark : QuranMenuPaletteData.light;
+
+  /// مفتاح تبديل واضح: دائرة بيضاء على مسار أخضر، ومسار رمادي أوضح عند الإطفاء.
+  SwitchThemeData _menuSwitchTheme(BuildContext context) {
+    final active = _menuPal.switchActive;
+    final offTrack = _menuPal.isDark
+        ? Colors.white.withValues(alpha: 0.34)
+        : const Color(0xFF9E9E9E);
+    final offThumb =
+        _menuPal.isDark ? Colors.grey.shade300 : Colors.grey.shade200;
+    final offOutline = _menuPal.isDark
+        ? Colors.white.withValues(alpha: 0.5)
+        : const Color(0xFF757575);
+
+    return SwitchThemeData(
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return Colors.white;
+        }
+        return offThumb;
+      }),
+      trackColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return active.withValues(alpha: _menuPal.isDark ? 0.88 : 0.78);
+        }
+        return offTrack;
+      }),
+      trackOutlineColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return active;
+        }
+        return offOutline;
+      }),
+      trackOutlineWidth: const WidgetStatePropertyAll(1.2),
+    );
+  }
 
   String get _arabicUiFontFamily =>
       _arabicUiFontFamilyResolved(_arabicUiFontId);
@@ -1104,6 +1174,76 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     });
   }
 
+  void _cancelSearchAyahHighlightAnimation() {
+    _searchAyahHighlightHoldTimer?.cancel();
+    _searchAyahHighlightHoldTimer = null;
+    _searchAyahHighlightFadeController?.removeListener(
+      _onSearchAyahHighlightFadeTick,
+    );
+    _searchAyahHighlightFadeController?.dispose();
+    _searchAyahHighlightFadeController = null;
+  }
+
+  void _onSearchAyahHighlightFadeTick() {
+    final store = TemporarySearchAyahHighlightStore.instance;
+    if (store.sura == null || store.ayah == null || store.page == null) {
+      return;
+    }
+    store.setHighlight(
+      sura: store.sura!,
+      ayah: store.ayah!,
+      page: store.page!,
+      opacity: _searchAyahHighlightFadeController?.value ?? 0.0,
+    );
+  }
+
+  void _triggerSearchAyahHighlight({
+    required int sura,
+    required int ayah,
+    required int page,
+  }) {
+    _cancelSearchAyahHighlightAnimation();
+    TemporarySearchAyahHighlightStore.instance.setHighlight(
+      sura: sura,
+      ayah: ayah,
+      page: page,
+      opacity: 1.0,
+    );
+    _searchAyahHighlightHoldTimer = Timer(
+      _searchAyahHighlightVisibleDuration,
+      () {
+        if (!mounted) return;
+        _startSearchAyahHighlightFade();
+      },
+    );
+  }
+
+  void _startSearchAyahHighlightFade() {
+    _searchAyahHighlightHoldTimer = null;
+    final store = TemporarySearchAyahHighlightStore.instance;
+    if (store.sura == null || store.ayah == null || store.page == null) {
+      return;
+    }
+    _searchAyahHighlightFadeController?.dispose();
+    _searchAyahHighlightFadeController = AnimationController(
+      vsync: this,
+      duration: _searchAyahHighlightFadeDuration,
+      value: 1.0,
+    )..addListener(_onSearchAyahHighlightFadeTick);
+    _searchAyahHighlightFadeController!.reverse().whenComplete(() {
+      if (!mounted) {
+        TemporarySearchAyahHighlightStore.instance.clear();
+        return;
+      }
+      TemporarySearchAyahHighlightStore.instance.clear();
+      _searchAyahHighlightFadeController?.removeListener(
+        _onSearchAyahHighlightFadeTick,
+      );
+      _searchAyahHighlightFadeController?.dispose();
+      _searchAyahHighlightFadeController = null;
+    });
+  }
+
   void _navigateToPage(int oneBasedPage, {bool animate = true}) {
     final targetIndex = (oneBasedPage - 1).clamp(0, totalPages - 1);
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -1203,6 +1343,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   @override
   void dispose() {
     final pendingPage = _pendingCurrentPageSave;
+    _menuUiGeneration.dispose();
     _saveCurrentPageDebounce?.cancel();
     _preloadDebounce?.cancel();
     _mushafRenderTierTimer?.cancel();
@@ -1220,9 +1361,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     _longScrollBarMinimizeTimer?.cancel();
     _longScrollPeekFadeTimer?.cancel();
     _inactivityTimer?.cancel();
+    _cancelSearchAyahHighlightAnimation();
+    TemporarySearchAyahHighlightStore.instance.clear();
     WakelockPlus.disable();
     MushafRamIdleExpander.instance.disposeOnLeaveMushaf();
     _pageController.dispose();
+    _liteScrollNotifier.dispose();
+    _mediumScrollNotifier.dispose();
     super.dispose();
   }
 
@@ -1254,34 +1399,23 @@ class _QuranPageViewerState extends State<QuranPageViewer>
 
   void _enterScrollRenderLite() {
     _mushafRenderTierTimer?.cancel();
-    var changed = false;
-    if (!_lightweightMushafDuringScroll) {
-      _lightweightMushafDuringScroll = true;
-      changed = true;
+    // ValueNotifier — لا setState: فقط ListenableBuilder داخل _buildSinglePageForMode يُعاد بناؤه
+    if (!_liteScrollNotifier.value || _mediumScrollNotifier.value) {
+      _liteScrollNotifier.value = true;
+      _mediumScrollNotifier.value = false;
     }
-    if (_mediumQualityMushafAfterScroll) {
-      _mediumQualityMushafAfterScroll = false;
-      changed = true;
-    }
-    if (changed) setState(() {});
   }
 
   void _settleScrollRenderTier() {
     _mushafRenderTierTimer?.cancel();
-    var changed = false;
-    if (_lightweightMushafDuringScroll) {
-      _lightweightMushafDuringScroll = false;
-      changed = true;
+    if (_liteScrollNotifier.value || !_mediumScrollNotifier.value) {
+      _liteScrollNotifier.value = false;
+      _mediumScrollNotifier.value = true;
     }
-    if (!_mediumQualityMushafAfterScroll) {
-      _mediumQualityMushafAfterScroll = true;
-      changed = true;
-    }
-    if (changed) setState(() {});
-    _mushafRenderTierTimer = Timer(const Duration(milliseconds: 180), () {
+    _mushafRenderTierTimer = Timer(const Duration(milliseconds: 220), () {
       if (!mounted) return;
-      if (_mediumQualityMushafAfterScroll) {
-        setState(() => _mediumQualityMushafAfterScroll = false);
+      if (_mediumScrollNotifier.value) {
+        _mediumScrollNotifier.value = false;
       }
     });
   }
@@ -1889,15 +2023,53 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
+  /// يُعاد بناء كل القوائم/الأوراق المفتوحة فوراً بعد تغيير مظهر الواجهة.
+  void _notifyMenuUiChanged() {
+    _menuUiGeneration.value++;
+  }
+
   /// تدوير 90° كما في [_showOptionsSheet] حتى تخرج الفروع بنفس اتجاه القائمة.
-  Widget _wrapMainMenuFamilyOverlay(BuildContext sheetContext, Widget child) {
-    return QuranMenuPalette(
-      data: _menuPal,
-      child: wrapQuranMenuFamilySheetOverlay(
-        sheetContext,
-        child,
-        horizontallyRotatedReading: _isHorizontallyRotatedReading,
-      ),
+  Widget _wrapMainMenuFamilyOverlay(
+    BuildContext sheetContext, {
+    required Widget Function(BuildContext sheetContext) bodyBuilder,
+    Color? surfaceColor,
+  }) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _menuUiGeneration,
+      builder: (context, _, __) {
+        final surface = surfaceColor ?? _menuPal.surface;
+        return Material(
+          color: surface,
+          child: QuranMenuPalette(
+            data: _menuPal,
+            child: wrapQuranMenuFamilySheetOverlay(
+              sheetContext,
+              bodyBuilder(sheetContext),
+              horizontallyRotatedReading: _isHorizontallyRotatedReading,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// حوارات [showDialog]: لوحة ألوان فقط — بدون [Material] يملأ الشاشة خلف [AlertDialog].
+  Widget _wrapMenuDialogOverlay(
+    BuildContext dialogContext, {
+    required Widget Function(BuildContext dialogContext) bodyBuilder,
+  }) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _menuUiGeneration,
+      builder: (context, _, __) {
+        return QuranMenuPalette(
+          data: _menuPal,
+          child: wrapQuranMenuFamilySheetOverlay(
+            dialogContext,
+            bodyBuilder(dialogContext),
+            horizontallyRotatedReading: _isHorizontallyRotatedReading,
+          ),
+        );
+      },
     );
   }
 
@@ -1977,14 +2149,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     );
   }
 
-  /// تجاهل اختلاف الهمزة (أ إ آ ء) عند البحث — توحيدها إلى ا
+  /// تطبيع النص العربي للبحث: إزالة تشكيل، توحيد همزات وألف وصل، ة→ه،
+  /// وتحويل الأرقام الهندية/العربية إلى لاتينية.
   static String _normalizeForSearch(String s) {
-    // إزالة الحركات (التشكيل)
-    String normalized = s.replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '');
-    // إزالة علامات التشكيل الأخرى
-    normalized = normalized.replaceAll(RegExp(r'[\u0610-\u061A\u0640]'), '');
-    // توحيد الهمزات
-    normalized = normalized
+    String n = s
+        .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '') // تشكيل
+        .replaceAll(RegExp(r'[\u0610-\u061A\u0640]'), '') // علامات قرآنية + تطويل
+        .replaceAll('ٱ', 'ا') // ألف وصل
         .replaceAll('أ', 'ا')
         .replaceAll('إ', 'ا')
         .replaceAll('آ', 'ا')
@@ -1992,8 +2163,63 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         .replaceAll('ؤ', 'و')
         .replaceAll('ئ', 'ي')
         .replaceAll('ى', 'ي')
-        .replaceAll('ة', 'ه');
-    return normalized.toLowerCase();
+        .replaceAll('ة', 'ه')
+        // الأرقام الهندية/العربية → لاتينية
+        .replaceAll('٠', '0')
+        .replaceAll('١', '1')
+        .replaceAll('٢', '2')
+        .replaceAll('٣', '3')
+        .replaceAll('٤', '4')
+        .replaceAll('٥', '5')
+        .replaceAll('٦', '6')
+        .replaceAll('٧', '7')
+        .replaceAll('٨', '8')
+        .replaceAll('٩', '9');
+    return n.toLowerCase();
+  }
+
+  /// يحوّل نصاً من أرقام هندية/عربية أو لاتينية إلى int.
+  /// يعيد null إذا كان النص يحتوي على أي حرف غير رقمي.
+  static int? _parseArabicOrLatinInt(String s) {
+    const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    final buf = StringBuffer();
+    for (var i = 0; i < t.length; i++) {
+      final c = t[i];
+      final aIdx = arabicDigits.indexOf(c);
+      if (aIdx >= 0) {
+        buf.write(aIdx);
+      } else if (c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39) {
+        buf.write(c); // رقم لاتيني 0-9
+      } else {
+        return null; // حرف غير رقمي → ليس رقم صفحة
+      }
+    }
+    return int.tryParse(buf.toString());
+  }
+
+  /// تطبيع خاص بأسماء السور: نفس _normalizeForSearch ثم حذف "ال" من البداية.
+  static String _normalizeSurahQuery(String s) {
+    var n = _normalizeForSearch(s).trim();
+    if (n.startsWith('ال ')) {
+      n = n.substring(3).trim();
+    } else if (n.startsWith('ال') && n.length > 2) {
+      n = n.substring(2).trim();
+    }
+    return n;
+  }
+
+  /// يبحث في قائمة السور بالاسم الجزئي أو الكامل.
+  /// يدعم: «بقره»، «ال بقرة»، «عمران»، «ال عمران»، «نسا»، «يوسف»...
+  List<({int no, String nameAr, int startPage})> _searchSurahByName(
+      String query) {
+    final nq = _normalizeSurahQuery(query);
+    if (nq.length < 2) return [];
+    return _suraList.where((s) {
+      final ns = _normalizeSurahQuery(s.nameAr);
+      return ns.contains(nq) || nq.contains(ns);
+    }).take(5).toList();
   }
 
   Future<void> _loadFromJson() async {
@@ -2264,9 +2490,11 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       });
       await _loadPrefs();
     } catch (e) {
+      debugPrint('Mushaf load failed: $e');
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error =
+            'حدث خطأ أثناء تحميل التطبيق. أعد تشغيل التطبيق وحاول مرة أخرى.';
       });
     }
   }
@@ -2339,6 +2567,18 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             suraName,
             onClearSelection,
           ),
+      onOpenSmartRecitationFromAyah: () {
+        unawaited(
+          RecitationScreen.open(
+            context,
+            initialSurahNumber: sura,
+            initialAyahNumber: ayah,
+            lockInitialAyahOnOpen: true,
+          ),
+        );
+      },
+      openSmartRecitationFromAyahEnabled:
+          !_isAyahHighlightingDisabledByAudio,
       onHighlight: () => _showAyahHighlightSheet(
             context,
             sura: sura,
@@ -2427,10 +2667,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     showQuranMenuSidePanel<void>(
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: _TafseerRangePickerSheet(
             sura: firstSura,
@@ -2649,10 +2889,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: SizedBox(
@@ -3059,7 +3299,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 .clamp(220.0, double.infinity)
                 .toDouble();
         final titleText = player.state == AyahPlayerState.error
-            ? (player.errorMessage ?? 'خطأ')
+            ? (player.errorMessage ??
+                'تعذّر تشغيل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.')
             : (suraName.isNotEmpty && ayah != null
                 ? '$suraName — آية $ayah'
                 : suraName.isNotEmpty
@@ -3373,12 +3614,12 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     return showQuranMenuSidePanel<AyahPlaybackMode>(
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) {
         final current = AyahAudioPlayer.instance.playbackMode;
         return _wrapMainMenuFamilyOverlay(
           ctx,
-          Directionality(
+          bodyBuilder: (ctx) => Directionality(
             textDirection: TextDirection.rtl,
             child: SafeArea(
               child: Padding(
@@ -3474,7 +3715,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         bottomSheetShape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
-        backgroundColor: _menuPal.surface,
+        backgroundColor: _kMenuSheetChrome,
         builder: (ctx) {
           final safePadding = MediaQuery.paddingOf(ctx);
           final rotatedSheetHeight = (MediaQuery.sizeOf(ctx).width -
@@ -3483,7 +3724,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   12)
               .clamp(320.0, 760.0)
               .toDouble();
-          final sheet = Directionality(
+          return _wrapMainMenuFamilyOverlay(
+            ctx,
+            bodyBuilder: (sheetCtx) => Directionality(
             textDirection: TextDirection.rtl,
             child: SizedBox(
               height: rotateWithPlayer ? rotatedSheetHeight : null,
@@ -3511,8 +3754,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 },
               ),
             ),
+          ),
           );
-          return _wrapMainMenuFamilyOverlay(ctx, sheet);
         },
       );
     } finally {
@@ -3536,7 +3779,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) {
         final safePadding = MediaQuery.paddingOf(ctx);
         final rotatedSheetHeight = (MediaQuery.sizeOf(ctx).width -
@@ -3545,7 +3788,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 12)
             .clamp(320.0, 760.0)
             .toDouble();
-        final sheet = Directionality(
+        return _wrapMainMenuFamilyOverlay(
+          ctx,
+          bodyBuilder: (sheetCtx) => Directionality(
           textDirection: TextDirection.rtl,
           child: SizedBox(
             height: rotateWithPlayer ? rotatedSheetHeight : maxSheetHeight,
@@ -3581,16 +3826,16 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                               ),
                               const SizedBox(height: 6),
                               ...favReciters.map(
-                                (r) =>
-                                    _reciterTile(ctx, r, currentId, favorites),
+                                (r) => _reciterTile(
+                                    sheetCtx, r, currentId, favorites),
                               ),
                               if (otherReciters.isNotEmpty)
                                 const SizedBox(height: 8),
                             ],
                             if (otherReciters.isNotEmpty)
                               ...otherReciters.map(
-                                (r) =>
-                                    _reciterTile(ctx, r, currentId, favorites),
+                                (r) => _reciterTile(
+                                    sheetCtx, r, currentId, favorites),
                               ),
                           ],
                         ),
@@ -3601,8 +3846,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               ),
             ),
           ),
+        ),
         );
-        return _wrapMainMenuFamilyOverlay(ctx, sheet);
       },
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
@@ -3714,7 +3959,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
           onPageChanged: (p) {
             final nextIndex = p - 1;
             if (nextIndex == _currentPageIndex) return;
-            setState(() => _currentPageIndex = nextIndex);
+            _currentPageIndex = nextIndex;
+            PageBackgroundLoader.instance.setCurrentPage(p); // Fix 6
             _saveCurrentPage(_currentPageIndex);
             _syncMushafRamExpanderContext();
             if (type == DisplayType.horizontal) {
@@ -3827,12 +4073,17 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             child: NotificationListener<ScrollNotification>(
               onNotification: (n) {
                 if (n is ScrollStartNotification && n.dragDetails != null) {
+                  _enterScrollRenderLite();
                   if (_autoScrollEnabled) {
                     setState(() => _autoScrollEnabled = false);
                     _stopAutoScrollTicker();
                     _saveDisplayPrefs();
                   }
-                  _enterScrollRenderLite();
+                }
+                if (n is ScrollEndNotification ||
+                    (n is UserScrollNotification &&
+                        n.direction == ScrollDirection.idle)) {
+                  _settleScrollRenderTier();
                 }
                 if (n is ScrollUpdateNotification ||
                     n is ScrollEndNotification) {
@@ -3841,20 +4092,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     final page = ((ctrl.offset / itemExtent).round() + 1)
                         .clamp(1, totalPages);
                     if (page - 1 != _currentPageIndex) {
+                      _currentPageIndex = page - 1; // Fix 5: بلا setState
                       _schedulePreloadAroundPage(page);
-                      setState(() {
-                        _currentPageIndex = page - 1;
-                        PageBackgroundLoader.instance.setCurrentPage(page);
-                        _saveCurrentPage(_currentPageIndex);
-                      });
+                      PageBackgroundLoader.instance.setCurrentPage(page);
+                      _saveCurrentPage(_currentPageIndex);
                       _syncMushafRamExpanderContext();
                     }
                   }
-                }
-                if (n is ScrollEndNotification ||
-                    (n is UserScrollNotification &&
-                        n.direction == ScrollDirection.idle)) {
-                  _settleScrollRenderTier();
                 }
                 return false;
               },
@@ -3865,18 +4109,21 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 itemExtent: itemExtent,
                 itemBuilder: (context, index) {
                   final page = index + 1;
-                  return SizedBox(
-                    width: itemExtent,
-                    height: fullPageHeight,
-                    child: Center(
-                      child: RotatedBox(
-                        quarterTurns: 1,
-                        child: SizedBox(
-                          width: fullPageHeight,
-                          height: itemExtent,
-                          child: _buildSinglePageForMode(
-                            page,
-                            seamlessLongScroll: _longScrollSeamlessReading,
+                  // Fix 8: RepaintBoundary لكل صفحة أفقية
+                  return RepaintBoundary(
+                    child: SizedBox(
+                      width: itemExtent,
+                      height: fullPageHeight,
+                      child: Center(
+                        child: RotatedBox(
+                          quarterTurns: 1,
+                          child: SizedBox(
+                            width: fullPageHeight,
+                            height: itemExtent,
+                            child: _buildSinglePageForMode(
+                              page,
+                              seamlessLongScroll: _longScrollSeamlessReading,
+                            ),
                           ),
                         ),
                       ),
@@ -3913,7 +4160,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         controller: _pageController,
         itemCount: 302,
         onPageChanged: (index) {
-          setState(() => _currentPageIndex = index * 2);
+          // itemBuilder يستخدم index مباشرةً — لا يحتاج rebuild
+          _currentPageIndex = index * 2;
           PageBackgroundLoader.instance.setCurrentPage(index * 2 + 1);
           _saveCurrentPage(_currentPageIndex);
           final center = index * 2 + 1;
@@ -3936,26 +4184,34 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   decoration: BoxDecoration(
                     color: _mushafBackgroundColor,
                     borderRadius: BorderRadius.circular(4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.1),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
+                    // Fix 4: الـ shadow يُحذف أثناء Scroll Lite بدون setState
+                    boxShadow: _liteScrollNotifier.value
+                        ? const []
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.1),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: Row(
                     children: [
+                      // Fix 7: RepaintBoundary لكل جانب — يمنع إعادة رسم الجانبين معاً
                       Expanded(
-                        child: _buildSinglePageForMode(leftPage),
+                        child: RepaintBoundary(
+                          child: _buildSinglePageForMode(leftPage),
+                        ),
                       ),
                       Container(
                         width: dividerWidth,
                         color: Colors.grey.shade400,
                       ),
                       Expanded(
-                        child: _buildSinglePageForMode(rightPage),
+                        child: RepaintBoundary(
+                          child: _buildSinglePageForMode(rightPage),
+                        ),
                       ),
                     ],
                   ),
@@ -3969,27 +4225,46 @@ class _QuranPageViewerState extends State<QuranPageViewer>
   }
 
   Widget _buildSinglePageForMode(int page, {bool seamlessLongScroll = false}) {
-    final content = buildQpcPageContent(
-      context,
-      page,
-      _qpcMode,
-      forceWhiteMushafText: _useWhiteTextOnDarkMushaf,
-      lightweightMode: _lightweightMushafDuringScroll,
-      mediumQualityMode: _mediumQualityMushafAfterScroll,
-    );
+    // Fix 4: ListenableBuilder يُعيد بناء المحتوى فقط دون إعادة بناء QuranPageViewer كاملاً
+    final listenable =
+        Listenable.merge([_liteScrollNotifier, _mediumScrollNotifier]);
     if (seamlessLongScroll) {
       return ColoredBox(
         color: _mushafBackgroundColor,
         child: SeamlessLongScrollScope(
           active: true,
-          child: SizedBox.expand(child: content),
+          child: SizedBox.expand(
+            child: ListenableBuilder(
+              listenable: listenable,
+              builder: (ctx, _) => buildQpcPageContent(
+                ctx,
+                page,
+                _qpcMode,
+                forceWhiteMushafText: _useWhiteTextOnDarkMushaf,
+                lightweightMode: _liteScrollNotifier.value,
+                mediumQualityMode: _mediumScrollNotifier.value,
+              ),
+            ),
+          ),
         ),
       );
     }
     return Column(
       children: [
         _buildQpcTopBarForPage(page),
-        Expanded(child: content),
+        Expanded(
+          child: ListenableBuilder(
+            listenable: listenable,
+            builder: (ctx, _) => buildQpcPageContent(
+              ctx,
+              page,
+              _qpcMode,
+              forceWhiteMushafText: _useWhiteTextOnDarkMushaf,
+              lightweightMode: _liteScrollNotifier.value,
+              mediumQualityMode: _mediumScrollNotifier.value,
+            ),
+          ),
+        ),
         _buildQpcPageNumberRow(page),
       ],
     );
@@ -4073,12 +4348,17 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         child: NotificationListener<ScrollNotification>(
           onNotification: (n) {
             if (n is ScrollStartNotification && n.dragDetails != null) {
+              _enterScrollRenderLite();
               if (_autoScrollEnabled) {
                 setState(() => _autoScrollEnabled = false);
                 _stopAutoScrollTicker();
                 _saveDisplayPrefs();
               }
-              _enterScrollRenderLite();
+            }
+            if (n is ScrollEndNotification ||
+                (n is UserScrollNotification &&
+                    n.direction == ScrollDirection.idle)) {
+              _settleScrollRenderTier();
             }
             if (n is ScrollUpdateNotification || n is ScrollEndNotification) {
               final ctrl = _longScrollController;
@@ -4086,20 +4366,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 final page = ((ctrl.offset / itemExtent).round() + 1)
                     .clamp(1, totalPages);
                 if (page - 1 != _currentPageIndex) {
+                  _currentPageIndex = page - 1; // Fix 5: بلا setState
                   _schedulePreloadAroundPage(page);
-                  setState(() {
-                    _currentPageIndex = page - 1;
-                    PageBackgroundLoader.instance.setCurrentPage(page);
-                    _saveCurrentPage(_currentPageIndex);
-                  });
+                  PageBackgroundLoader.instance.setCurrentPage(page);
+                  _saveCurrentPage(_currentPageIndex);
                   _syncMushafRamExpanderContext();
                 }
               }
-            }
-            if (n is ScrollEndNotification ||
-                (n is UserScrollNotification &&
-                    n.direction == ScrollDirection.idle)) {
-              _settleScrollRenderTier();
             }
             return false;
           },
@@ -4109,9 +4382,12 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             itemExtent: itemExtent,
             itemBuilder: (context, index) {
               final page = index + 1;
-              return _buildSinglePageForMode(
-                page,
-                seamlessLongScroll: _longScrollSeamlessReading,
+              // Fix 8: RepaintBoundary يمنع إعادة رسم الصفحات المجاورة عند تحديث صفحة واحدة
+              return RepaintBoundary(
+                child: _buildSinglePageForMode(
+                  page,
+                  seamlessLongScroll: _longScrollSeamlessReading,
+                ),
               );
             },
           ),
@@ -4267,7 +4543,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         ),
         SizedBox(
           height: _longScrollBarCaptionH,
-          width: 78,
+          width: 88,
           child: Align(
             alignment: Alignment.topCenter,
             child: Text(
@@ -4276,10 +4552,69 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: _menuQuranStyle(
-                fontSize: 11,
+                fontSize: _longScrollBarCaptionFontSize,
                 color: const Color(0xFF1B5E20),
-                fontWeight: running ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: FontWeight.w700,
               ).copyWith(height: 1.05),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// إغلاق التمرير الطويل والعودة لوضع العرض المحفوظ (مثل الضغطة الثانية من القائمة).
+  void _exitLongScrollFromBar() {
+    _longScrollBarIdleTimer?.cancel();
+    _longScrollBarMinimizeTimer?.cancel();
+    _longScrollPeekFadeTimer?.cancel();
+    _stopAutoScrollTicker();
+    setState(_applyUnifiedLongScrollToggle);
+    unawaited(_saveDisplayPrefs());
+  }
+
+  /// زر إغلاق في شريط التمرير الطويل (نفس ألوان بقية أزرار الشريط).
+  Widget _buildLongScrollCloseBarButton(BuildContext context) {
+    const green = Color(0xFF2E7D32);
+    const labelGreen = Color(0xFF1B5E20);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          height: _longScrollBarIconRowH,
+          child: Center(
+            child: IconButton(
+              tooltip: 'إغلاق التمرير الطويل',
+              icon: const Icon(
+                Icons.close_rounded,
+                color: green,
+                size: _longScrollBarIconSize,
+              ),
+              onPressed: _exitLongScrollFromBar,
+              padding: const EdgeInsets.all(4),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(
+                  minWidth: _longScrollBarIconRowH,
+                  minHeight: _longScrollBarIconRowH),
+            ),
+          ),
+        ),
+        SizedBox(
+          height: _longScrollBarCaptionH,
+          width: 44,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Text(
+              'إغلاق',
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _menuQuranStyle(
+                fontSize: _longScrollBarCaptionFontSize,
+                color: labelGreen,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -4329,7 +4664,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         ),
         SizedBox(
           height: _longScrollBarCaptionH,
-          width: 84,
+          width: 90,
           child: Align(
             alignment: Alignment.topCenter,
             child: Text(
@@ -4338,9 +4673,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: _menuQuranStyle(
-                fontSize: 11,
+                fontSize: _longScrollBarCaptionFontSize,
                 color: const Color(0xFF1B5E20),
-                fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: FontWeight.w700,
               ).copyWith(height: 1.05),
             ),
           ),
@@ -4349,7 +4684,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     );
   }
 
-  /// صف التحكم نفس ترتيب الشريط السفلي (RTL): تشغيل، −/النسبة/+، صفحات متصلة.
+  /// صف التحكم نفس ترتيب الشريط السفلي (RTL): تشغيل، −/النسبة/+، صفحات متصلة، إغلاق.
   Widget _buildLongScrollBarControlRow(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -4361,6 +4696,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
         _buildLongScrollBottomBarSpeedCluster(context),
         SizedBox(width: _longScrollBarBetweenGroups),
         _buildLongScrollSeamlessToggle(context),
+        SizedBox(width: _longScrollBarBetweenGroups),
+        _buildLongScrollCloseBarButton(context),
       ],
     );
   }
@@ -4629,19 +4966,21 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        StatefulBuilder(
+        bodyBuilder: (ctx) => StatefulBuilder(
           builder: (ctx, setSheetState) => Directionality(
             textDirection: TextDirection.rtl,
             child: SafeArea(
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    NestedQuranMenuAppBar(
-                      title: 'الإعدادات',
+              child: Theme(
+                data: Theme.of(ctx).copyWith(switchTheme: _menuSwitchTheme(ctx)),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      NestedQuranMenuAppBar(
+                        title: 'الإعدادات',
                       titleStyle: _menuQuranStyle(
                         fontSize: 18,
                         color: _menuPal.title,
@@ -4809,10 +5148,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                         ),
                       ),
                       value: _menuDarkMode,
-                      activeColor: _menuPal.switchActive,
                       onChanged: (v) async {
                         setState(() => _menuDarkMode = v);
-                        setSheetState(() {});
+                        _notifyMenuUiChanged();
                         await _saveMenuDarkModePref();
                       },
                     ),
@@ -4850,8 +5188,6 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                         ),
                       ),
                       value: _fullMushafBackgroundWarmup,
-                      activeTrackColor: _menuPal.switchActive,
-                      activeColor: _menuPal.switchActive,
                       onChanged: (v) async {
                         await _setFullMushafBackgroundWarmup(ctx, v);
                         setSheetState(() {});
@@ -4902,6 +5238,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
           ),
         ),
       ),
+    ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
@@ -4917,14 +5254,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        StatefulBuilder(
+        bodyBuilder: (ctx) => StatefulBuilder(
           builder: (ctx, setFontSheetState) {
             void bump() {
-              setFontSheetState(() {});
-              onParentListRefresh();
+              _notifyMenuUiChanged();
             }
 
             final scroll = SingleChildScrollView(
@@ -5096,14 +5432,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        StatefulBuilder(
+        bodyBuilder: (ctx) => StatefulBuilder(
           builder: (ctx, setPlayerSheetState) {
             void bump() {
-              setPlayerSheetState(() {});
-              onParentListRefresh();
+              _notifyMenuUiChanged();
             }
 
             final body = ListenableBuilder(
@@ -5114,20 +5449,23 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     .where((r) => r.id == player.currentReciterId)
                     .firstOrNull;
                 final reciterName = reciter?.nameAr ?? 'غير محدد';
-                return SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ListTile(
-                        leading: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: _menuPal.tileLeadingDecorationColor,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.record_voice_over_outlined,
+                return Theme(
+                  data: Theme.of(context)
+                      .copyWith(switchTheme: _menuSwitchTheme(context)),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          leading: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: _menuPal.tileLeadingDecorationColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.record_voice_over_outlined,
                             color: _menuPal.tileLeadingIconColor,
                             size: 24,
                           ),
@@ -5190,8 +5528,6 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                         ),
                         trailing: Switch.adaptive(
                           value: player.showAyahHighlight,
-                          activeTrackColor: _menuPal.switchActive,
-                          activeColor: _menuPal.switchActive,
                           onChanged: (v) async {
                             await player.setShowAyahHighlight(v);
                             bump();
@@ -5244,7 +5580,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                       const SizedBox(height: 12),
                     ],
                   ),
-                );
+                ),
+              );
               },
             );
 
@@ -5288,10 +5625,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: outerContext,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        StatefulBuilder(
+        bodyBuilder: (ctx) => StatefulBuilder(
           builder: (ctx, setModal) {
             final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
             return Padding(
@@ -5305,7 +5642,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     textAlign: TextAlign.center,
                     style: _menuQuranStyle(
                       fontSize: 18,
-                      color: const Color(0xFF1B5E20),
+                      color: _menuPal.title,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -5315,7 +5652,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     textAlign: TextAlign.center,
                     style: _menuQuranStyle(
                       fontSize: 16,
-                      color: const Color(0xFF2E7D32),
+                      color: _menuPal.accent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -5342,7 +5679,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                           'إعادة الافتراضي',
                           style: _menuQuranStyle(
                             fontSize: 14,
-                            color: const Color(0xFF2E7D32),
+                            color: _menuPal.accent,
                           ),
                         ),
                       ),
@@ -5353,7 +5690,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                           'تم',
                           style: _menuQuranStyle(
                             fontSize: 16,
-                            color: const Color(0xFF2E7D32),
+                            color: _menuPal.accent,
                           ),
                         ),
                       ),
@@ -5379,6 +5716,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       onScaleChanged: (v) {
         setState(() => _menuFontScale = v);
         onLiveChanged?.call();
+        _notifyMenuUiChanged();
       },
     );
   }
@@ -5394,6 +5732,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       onScaleChanged: (v) {
         setState(() => _tafsirFontScale = v);
         onLiveChanged?.call();
+        _notifyMenuUiChanged();
       },
     );
   }
@@ -5408,10 +5747,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: outerContext,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: StatefulBuilder(
@@ -5549,6 +5888,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                               onPressed: () {
                                 setState(() => _arabicUiFontId = localId);
                                 _saveUiFontPrefs();
+                                _notifyMenuUiChanged();
                                 onApplied?.call();
                                 Navigator.pop(ctx);
                               },
@@ -5580,10 +5920,11 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     showQuranMenuSidePanel<void>(
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
-      backgroundColor: _menuPal.surfaceAlt,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        StatefulBuilder(
+        surfaceColor: _menuPal.surfaceAlt,
+        bodyBuilder: (ctx) => StatefulBuilder(
           builder: (context, setSheetState) {
             final sidePanel = _isHorizontallyRotatedReading ||
                 MediaQuery.orientationOf(context) == Orientation.landscape;
@@ -6609,10 +6950,12 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     await showQuranMenuSidePanel<void>(
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
-      backgroundColor: _menuPal.surface,
-      builder: (ctx) {
+      backgroundColor: _kMenuSheetChrome,
+      builder: (ctx) => _wrapMainMenuFamilyOverlay(
+        ctx,
+        bodyBuilder: (sheetCtx) {
         final sidePanel = _isHorizontallyRotatedReading ||
-            MediaQuery.orientationOf(ctx) == Orientation.landscape;
+            MediaQuery.orientationOf(sheetCtx) == Orientation.landscape;
         final menuScroll = SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(
@@ -6621,12 +6964,35 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Column(
                   children: [
-                    _buildSearchMainMenuCard(ctx, context, currentIndex,
-                        onTap: () =>
-                            _showSearchDialog(context, _currentPageIndex)),
+                    _buildMainMenuCompactRow(
+                      sheetCtx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.search,
+                          title: 'بحث',
+                          closeMenuBeforeAction: false,
+                          onTap: () =>
+                              _showSearchDialog(context, _currentPageIndex),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.mic_external_on_rounded,
+                          title: 'التسميع الذكي',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _openRecitationScreen(sheetCtx),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.schedule_rounded,
+                          title: 'الختم المنظم',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _openKhatmMunazam(sheetCtx),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 6),
                     _buildMainMenuCompactRow(
-                      ctx,
+                      sheetCtx,
                       context,
                       currentIndex,
                       items: [
@@ -6653,7 +7019,37 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     ),
                     const SizedBox(height: 6),
                     _buildMainMenuCompactRow(
-                      ctx,
+                      sheetCtx,
+                      context,
+                      currentIndex,
+                      items: [
+                        _MainMenuCompactItem(
+                          icon: Icons.auto_stories_outlined,
+                          title: 'أذكار وأدعية',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showAzkarDialog(context),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.fingerprint_outlined,
+                          title: 'عداد الذكر',
+                          closeMenuBeforeAction: true,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const DhikrCounterScreen(),
+                            ),
+                          ),
+                        ),
+                        _MainMenuCompactItem(
+                          icon: Icons.menu_book_outlined,
+                          title: 'التفسير',
+                          closeMenuBeforeAction: false,
+                          onTap: () => _showTafseerFromMainMenu(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildMainMenuCompactRow(
+                      sheetCtx,
                       context,
                       currentIndex,
                       items: [
@@ -6675,27 +7071,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                     ),
                     const SizedBox(height: 6),
                     _buildMainMenuCompactRow(
-                      ctx,
-                      context,
-                      currentIndex,
-                      items: [
-                        _MainMenuCompactItem(
-                          icon: Icons.auto_stories_outlined,
-                          title: 'أذكار وأدعية',
-                          closeMenuBeforeAction: false,
-                          onTap: () => _showAzkarDialog(context),
-                        ),
-                        _MainMenuCompactItem(
-                          icon: Icons.menu_book_outlined,
-                          title: 'التفسير',
-                          closeMenuBeforeAction: false,
-                          onTap: () => _showTafseerFromMainMenu(context),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    _buildMainMenuCompactRow(
-                      ctx,
+                      sheetCtx,
                       context,
                       currentIndex,
                       items: [
@@ -6719,10 +7095,8 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                 ),
               ),
               const SizedBox(height: 6),
-              _buildSmartRecitationMainMenuItem(ctx),
-              const SizedBox(height: 6),
               _buildHighlightingMenuItem(
-                ctx,
+                sheetCtx,
                 context,
                 currentIndex,
                 visible: _ayahHighlightsVisible,
@@ -6732,6 +7106,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   setState(() {
                     _ayahHighlightsVisible = !_ayahHighlightsVisible;
                   });
+                  _notifyMenuUiChanged();
                   await writeAyahHighlightsVisible(_ayahHighlightsVisible);
                   _syncAyahHighlightsStore();
                 },
@@ -6739,13 +7114,13 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             ],
           ),
         );
-        final sheet = Directionality(
+        return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Column(
               mainAxisSize: sidePanel ? MainAxisSize.max : MainAxisSize.min,
               children: [
-                _buildDisplayModeStrip(ctx, context),
+                _buildDisplayModeStrip(sheetCtx, context),
                 Divider(height: 1, color: _menuPal.divider),
                 sidePanel
                     ? Expanded(child: menuScroll)
@@ -6754,50 +7129,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             ),
           ),
         );
-        return _wrapMainMenuFamilyOverlay(ctx, sheet);
       },
-    ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
-  }
-
-  Widget _buildSearchMainMenuCard(
-    BuildContext ctx,
-    BuildContext context,
-    int currentIndex, {
-    required VoidCallback onTap,
-  }) {
-    final pal = _menuPal;
-    final borderC = pal.title.withValues(alpha: 0.22);
-    final fillC = pal.isDark
-        ? pal.accent.withValues(alpha: 0.20)
-        : pal.title.withValues(alpha: 0.10);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: fillC,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderC),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search, color: pal.title, size: 22),
-            const SizedBox(width: 8),
-            Text(
-              'بحث',
-              style: _menuQuranStyle(
-                fontSize: 17,
-                color: pal.title,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
       ),
-    );
+    ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
   Widget _buildMainMenuCompactRow(
@@ -6872,73 +7206,16 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     );
   }
 
-  Widget _buildSmartRecitationMainMenuItem(BuildContext menuOverlayContext) {
-    final pal = _menuPal;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Material(
-        color: pal.cardSurface,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        elevation: 1,
-        shadowColor: Colors.black.withValues(alpha: 0.06),
-        child: InkWell(
-          onTap: () => _openRecitationScreen(menuOverlayContext),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: pal.accent.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.mic_external_on_rounded,
-                    color: pal.accent,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'التسميع الذكي',
-                        style: _menuQuranStyle(
-                          fontSize: 17,
-                          color: pal.title,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'ابدأ التسميع من الصفحة الحالية مع متابعة الكلمات',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: _menuQuranStyle(
-                          fontSize: 13,
-                          color: pal.subtitle,
-                          fontWeight: FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: pal.trailingChevron,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+  Future<void> _openKhatmMunazam(BuildContext menuContext) async {
+    _dismissAllMenuOverlays(menuContext);
+    if (!mounted) return;
+    await showKhatmMunazamSetup(
+      context: context,
+      menuDarkMode: _menuDarkMode,
+      suraList: _suraList,
+      suraAyahCount: _suraAyahCount,
+      arabicUiFontFamily: _arabicUiFontFamily,
+      horizontallyRotatedReading: _isHorizontallyRotatedReading,
     );
   }
 
@@ -6973,6 +7250,16 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       onDismissAllMenus: (ctx) => _dismissAllMenuOverlays(ctx),
       onJumpToMushafPage: (page) => _navigateToPage(page),
       onEditHighlight: (c, e) => _showAyahHighlightSheet(c, editing: e),
+      onRecitationFromHighlight: (c, e) async {
+        _dismissAllMenuOverlays(c);
+        if (!mounted) return;
+        await RecitationScreen.open(
+          context,
+          initialSurahNumber: e.sura,
+          initialAyahNumber: e.fromAyah,
+          lockInitialAyahOnOpen: true,
+        );
+      },
       onHighlightsListMutated: () async {
         final list = await readAyahHighlightRanges();
         if (!mounted) return;
@@ -6998,10 +7285,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: SizedBox(
@@ -7154,10 +7441,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: SizedBox(
             height: MediaQuery.of(ctx).size.height * 0.85,
@@ -7410,9 +7697,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             const Color(0xFF795548), // بني
           ];
           final pal = _menuPal;
-          return _wrapMainMenuFamilyOverlay(
+          return _wrapMenuDialogOverlay(
             ctx,
-            Directionality(
+            bodyBuilder: (ctx) => Directionality(
               textDirection: TextDirection.rtl,
               child: AlertDialog(
                 backgroundColor: pal.surface,
@@ -7527,9 +7814,9 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             }
           }
 
-          return _wrapMainMenuFamilyOverlay(
+          return _wrapMenuDialogOverlay(
             ctx,
-            Directionality(
+            bodyBuilder: (ctx) => Directionality(
               textDirection: TextDirection.rtl,
               child: AlertDialog(
                 backgroundColor: pal.surface,
@@ -7619,15 +7906,30 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                             }
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 8),
-                              child: TextField(
-                                controller: sessionTimeControllers[i],
-                                decoration: _menuDialogInputDecoration(
-                                  pal,
-                                  labelText: 'وقت القراءة ${i + 1}',
-                                  hintText: 'مثال: الفجر، الظهر، العصر...',
-                                ),
-                                style: _menuQuranStyle(
-                                    fontSize: 16, color: pal.searchFieldText),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    'وقت القراءة ${i + 1}',
+                                    style: _menuQuranStyle(
+                                      fontSize: 13,
+                                      color: pal.subtitle,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  TextField(
+                                    controller: sessionTimeControllers[i],
+                                    decoration: _menuDialogInputDecoration(
+                                      pal,
+                                      hintText:
+                                          'مثال: الفجر، الظهر، العصر...',
+                                    ),
+                                    style: _menuQuranStyle(
+                                        fontSize: 16,
+                                        color: pal.searchFieldText),
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -7719,10 +8021,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: StatefulBuilder(
             builder: (modalCtx, setModalState) => SafeArea(
@@ -7874,7 +8176,46 @@ class _QuranPageViewerState extends State<QuranPageViewer>
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
   }
 
-  void _showSearchDialog(BuildContext context, int currentIndex) {
+  Future<void> _showSearchDialog(BuildContext context, int currentIndex) async {
+    MushafRamIdleExpander.instance.beginBlockingUi();
+    _QuranSearchSelection? selection;
+    try {
+      selection = await showDialog<_QuranSearchSelection>(
+        context: context,
+        builder: (ctx) => _wrapSearchDialogOverlay(
+          ctx,
+          _QuranSearchDialog(
+            ayahList: _ayahList,
+            suraList: _suraList,
+            totalPages: totalPages,
+            quranStyle: _menuQuranStyle,
+            toNormalDigits: _toNormalDigits,
+          ),
+        ),
+      );
+    } finally {
+      MushafRamIdleExpander.instance.endBlockingUi();
+    }
+
+    if (!mounted) return;
+    if (selection == null) return;
+    _navigateToPage(selection.page);
+    if (selection.suraNo != null && selection.ayahNo != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _triggerSearchAyahHighlight(
+          sura: selection!.suraNo!,
+          ayah: selection.ayahNo!,
+          page: selection.page,
+        );
+      });
+    }
+  }
+
+  // ignore: unused_element
+  Future<void> _showSearchDialogLegacy(
+      BuildContext context, int currentIndex) async {
+    final textController = TextEditingController();
     final queryText = ValueNotifier<String>('');
     final results = ValueNotifier<
         List<
@@ -7885,24 +8226,240 @@ class _QuranPageViewerState extends State<QuranPageViewer>
               String suraNameAr,
               String text
             })>>([]);
+    final pageHint = ValueNotifier<int?>(null);
+    final surahHints =
+        ValueNotifier<List<({int no, String nameAr, int startPage})>>([]);
+    final isVoiceListening = ValueNotifier<bool>(false);
+    final voiceResults = ValueNotifier<List<VoiceAyahSearchResult>>([]);
+    final voiceStatus = ValueNotifier<String>('');
+    Timer? searchDebounce;
+    StreamSubscription<NativeSpeechEvent>? speechSub;
+    bool dialogClosed = false;
+    bool didSelectVoiceResult = false;
+    int voiceSearchGeneration = 0;
 
     void runSearch(String q) {
       final t = q.trim();
       if (t.isEmpty) {
+        pageHint.value = null;
+        surahHints.value = [];
         results.value = [];
         return;
       }
-      final normalizedQuery = _normalizeForSearch(t);
+
+      // اقتراح رقم الصفحة — فقط إذا كان النص أرقاماً بحتة بين 1–604
+      final pageNum = _parseArabicOrLatinInt(t);
+      pageHint.value =
+          (pageNum != null && pageNum >= 1 && pageNum <= totalPages)
+              ? pageNum
+              : null;
+
+      // اقتراح أسماء السور
+      surahHints.value = _searchSurahByName(t);
+
+      // بحث نص الآيات (بحث جزئي مطبَّع)
+      final nq = _normalizeForSearch(t);
       results.value = _ayahList
-          .where((a) => _normalizeForSearch(a.text).contains(normalizedQuery))
+          .where((a) => _normalizeForSearch(a.text).contains(nq))
           .take(200)
           .toList();
     }
 
+    // مسار الكتابة اليدوية فقط — يصفّر نتائج الصوت ويشغّل البحث النصي
+    void onQueryChanged(String value) {
+      queryText.value = value;
+      searchDebounce?.cancel();
+      // أي كتابة يدوية → تصفير نتائج الصوت
+      voiceResults.value = [];
+      voiceStatus.value = '';
+      if (value.trim().isEmpty) {
+        pageHint.value = null;
+        surahHints.value = [];
+        results.value = [];
+        return;
+      }
+      // debounce 300ms — يمنع البحث عند كل حرف
+      searchDebounce = Timer(const Duration(milliseconds: 300), () {
+        runSearch(value);
+      });
+    }
+
+    // مسار المايك فقط — يصفّر البحث النصي ويشغّل البحث الصوتي
+    Future<void> onVoiceTranscript(String text) async {
+      if (dialogClosed || didSelectVoiceResult) return;
+      // تحديث حقل البحث (للعرض)
+      debugPrint(
+          'VOICE_EVENT update controller closed=$dialogClosed selected=$didSelectVoiceResult');
+      textController.text = text;
+      textController.selection =
+          TextSelection.collapsed(offset: text.length);
+      // تحديث queryText لمنع ظهور رسالة "اكتب..."
+      queryText.value = text;
+      // تصفير البحث النصي — الصوت مسار مستقل
+      searchDebounce?.cancel();
+      pageHint.value = null;
+      surahHints.value = [];
+      results.value = [];
+      if (text.trim().isEmpty) return;
+
+      final generation = ++voiceSearchGeneration;
+      try {
+        final vr = await VoiceAyahSearchService.instance.search(text);
+        if (!dialogClosed &&
+            !didSelectVoiceResult &&
+            generation == voiceSearchGeneration) {
+          voiceResults.value = vr;
+          voiceStatus.value = vr.isEmpty
+              ? 'لم نسمع قراءة واضحة. قرّب الميكروفون وجرّب مرة أخرى.'
+              : '';
+        }
+      } catch (e, st) {
+        debugPrint('Voice ayah search failed: $e\n$st');
+        if (!dialogClosed &&
+            !didSelectVoiceResult &&
+            generation == voiceSearchGeneration) {
+          voiceResults.value = [];
+          voiceStatus.value =
+              'تعذّر تحليل القراءة الصوتية. اقرأ بوضوح وحاول مرة أخرى.';
+        }
+      }
+    }
+
+    Future<void> startVoiceSearch() async {
+      // إيقاف إذا كان يستمع
+      if (isVoiceListening.value) {
+        try {
+          await NativeSpeechService.instance.stopListening();
+        } catch (_) {}
+        speechSub?.cancel();
+        speechSub = null;
+        if (!dialogClosed && !didSelectVoiceResult) {
+          isVoiceListening.value = false;
+          voiceStatus.value = '';
+        }
+        return;
+      }
+
+      try {
+        // فحص التوفر
+        final available = await NativeSpeechService.instance.isAvailable();
+        if (!available) {
+          if (!dialogClosed && !didSelectVoiceResult) {
+            voiceStatus.value = _voiceSearchErrorForEvent();
+          }
+          return;
+        }
+
+        // فحص الصلاحيات
+        var hasPerm = await NativeSpeechService.instance.hasPermission();
+        if (!hasPerm) {
+          hasPerm = await NativeSpeechService.instance.requestPermission();
+        }
+        if (!hasPerm) {
+          if (!dialogClosed && !didSelectVoiceResult) {
+            voiceStatus.value =
+                _voiceSearchErrorForEvent(permissionDenied: true);
+          }
+          return;
+        }
+      } catch (e, st) {
+        debugPrint('Voice search permission check failed: $e\n$st');
+        if (!dialogClosed && !didSelectVoiceResult) {
+          voiceStatus.value = _voiceSearchErrorForEvent();
+        }
+        return;
+      }
+
+      if (dialogClosed || didSelectVoiceResult) return;
+      voiceResults.value = [];
+      voiceStatus.value = 'جاري الاستماع...';
+      isVoiceListening.value = true;
+
+      speechSub?.cancel();
+      speechSub = NativeSpeechService.instance.events.listen(
+        (event) async {
+          if (dialogClosed || didSelectVoiceResult) return;
+          if (event.type == 'result') {
+            final text = event.text?.trim() ?? '';
+            if (text.isEmpty) return;
+
+            // مسار الصوت المستقل: لا بحث نصي، فقط onVoiceTranscript
+            if (event.isFinal || text.split(' ').length >= 3) {
+              // نتيجة كافية للبحث الصوتي
+              await onVoiceTranscript(text);
+            } else {
+              // نتيجة جزئية — اعرض النص فقط دون بحث بعد
+              if (!dialogClosed && !didSelectVoiceResult) {
+                debugPrint(
+                    'VOICE_EVENT update controller closed=$dialogClosed selected=$didSelectVoiceResult');
+                textController.text = text;
+                textController.selection =
+                    TextSelection.collapsed(offset: text.length);
+                queryText.value = text;
+                searchDebounce?.cancel();
+                pageHint.value = null;
+                surahHints.value = [];
+                results.value = [];
+              }
+            }
+
+            if (event.isFinal) {
+              speechSub?.cancel();
+              speechSub = null;
+              if (!dialogClosed && !didSelectVoiceResult) {
+                isVoiceListening.value = false;
+              }
+            }
+          } else if (event.type == 'status' && event.status == 'stopped') {
+            if (!dialogClosed &&
+                !didSelectVoiceResult &&
+                isVoiceListening.value) {
+              isVoiceListening.value = false;
+            }
+          } else if (event.type == 'error') {
+            if (!dialogClosed && !didSelectVoiceResult) {
+              voiceStatus.value =
+                  _voiceSearchErrorForEvent(code: event.code);
+              isVoiceListening.value = false;
+            }
+            speechSub?.cancel();
+            speechSub = null;
+          }
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('Speech stream error: $e\n$st');
+          if (!dialogClosed && !didSelectVoiceResult) {
+            voiceStatus.value = _voiceSearchErrorForEvent();
+            isVoiceListening.value = false;
+          }
+        },
+      );
+
+      try {
+        await NativeSpeechService.instance.startListening(
+          locale: 'ar',
+          partialResults: true,
+          continuous: false,
+        );
+      } catch (e, st) {
+        debugPrint('startListening failed: $e\n$st');
+        speechSub?.cancel();
+        speechSub = null;
+        if (!dialogClosed && !didSelectVoiceResult) {
+          voiceStatus.value = _voiceSearchErrorForEvent();
+          isVoiceListening.value = false;
+        }
+      }
+    }
+
     MushafRamIdleExpander.instance.beginBlockingUi();
-    showDialog(
+    int? selectedVoicePage;
+    try {
+      selectedVoicePage = await showDialog<int>(
       context: context,
-      builder: (ctx) => _wrapSearchDialogOverlay(
+      builder: (dialogContext) {
+        final ctx = dialogContext;
+        return _wrapSearchDialogOverlay(
         ctx,
         Directionality(
           textDirection: TextDirection.rtl,
@@ -7934,95 +8491,420 @@ class _QuranPageViewerState extends State<QuranPageViewer>
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: TextField(
+                      controller: textController,
                       style: _menuQuranStyle(
                           fontSize: 18,
                           color: Colors.black87,
                           fontWeight: FontWeight.normal),
                       decoration: InputDecoration(
-                        hintText: 'اكتب جزءاً من الآية...',
+                        hintText:
+                            'اكتب جزءاً من الآية، اسم السورة، أو رقم الصفحة',
                         hintStyle: _menuQuranStyle(
-                            fontSize: 16,
+                            fontSize: 13,
                             color: Colors.grey,
                             fontWeight: FontWeight.normal),
                         border: const OutlineInputBorder(),
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),
+                        suffixIcon: ValueListenableBuilder<bool>(
+                          valueListenable: isVoiceListening,
+                          builder: (_, listening, __) => IconButton(
+                            icon: Icon(
+                              listening
+                                  ? Icons.mic
+                                  : Icons.mic_none_rounded,
+                              color: listening
+                                  ? const Color(0xFFE53935)
+                                  : const Color(0xFF2E7D32),
+                            ),
+                            tooltip:
+                                listening ? 'إيقاف الاستماع' : 'بحث بالصوت',
+                            onPressed: () {
+                              startVoiceSearch();
+                            },
+                          ),
+                        ),
                       ),
-                      onChanged: (value) {
-                        queryText.value = value;
-                        runSearch(value);
-                      },
+                      onChanged: onQueryChanged,
                       autofocus: true,
                     ),
                   ),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: ValueListenableBuilder<String>(
-                      valueListenable: queryText,
-                      builder: (_, query, __) => ValueListenableBuilder<
-                          List<
-                              ({
-                                int page,
-                                int suraNo,
-                                int ayaNo,
-                                String suraNameAr,
-                                String text
-                              })>>(
-                        valueListenable: results,
-                        builder: (_, list, __) {
-                          if (list.isEmpty && query.trim().isEmpty) {
-                            return Center(
-                              child: Text('اكتب نص الآية للبحث في الملف',
+                    child: ListenableBuilder(
+                      listenable: Listenable.merge([
+                        queryText,
+                        pageHint,
+                        surahHints,
+                        results,
+                        isVoiceListening,
+                        voiceResults,
+                        voiceStatus,
+                      ]),
+                      builder: (_, __) {
+                        final query = queryText.value;
+                        final ph = pageHint.value;
+                        final sh = surahHints.value;
+                        final list = results.value;
+                        final vr = voiceResults.value
+                            .where((v) =>
+                                v.pageNumber >= 1 &&
+                                v.pageNumber <= totalPages &&
+                                v.ayahText.trim().isNotEmpty &&
+                                v.confidenceScore.isFinite)
+                            .take(3)
+                            .toList(growable: false);
+                        final vStatus = voiceStatus.value;
+                        final isListening = isVoiceListening.value;
+
+                        final hasHints = ph != null || sh.isNotEmpty;
+                        final hasResults = list.isNotEmpty;
+                        final hasVoiceResults = vr.isNotEmpty;
+                        final hasVoiceActivity =
+                            isListening || vStatus.isNotEmpty;
+
+                        // --- حالة فارغة كاملة ---
+                        if (query.trim().isEmpty &&
+                            !hasVoiceActivity &&
+                            !hasVoiceResults) {
+                          return Center(
+                            child: Text(
+                              'اكتب نص الآية، اسم السورة، أو رقم الصفحة\nأو اضغط على المايك للبحث بالصوت',
+                              textAlign: TextAlign.center,
+                              style: _menuQuranStyle(
+                                  fontSize: 15,
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.normal),
+                            ),
+                          );
+                        }
+
+                        // --- لا نتائج على الإطلاق ---
+                        if (!hasHints &&
+                            !hasResults &&
+                            !hasVoiceResults &&
+                            !hasVoiceActivity) {
+                          return Center(
+                            child: Text(
+                              'لم يتم العثور على نتائج مطابقة.',
+                              style: _menuQuranStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.normal),
+                            ),
+                          );
+                        }
+
+                        // --- جاري الاستماع فقط (لا نتائج بعد) ---
+                        if (isListening &&
+                            !hasVoiceResults &&
+                            !hasHints &&
+                            !hasResults) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.mic,
+                                    size: 48, color: Color(0xFFE53935)),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'جاري الاستماع...',
                                   style: _menuQuranStyle(
                                       fontSize: 16,
-                                      color: Colors.grey,
-                                      fontWeight: FontWeight.normal)),
-                            );
-                          }
-                          if (list.isEmpty) {
-                            return Center(
-                              child: Text('لا توجد نتائج',
-                                  style: _menuQuranStyle(
-                                      fontSize: 16,
-                                      color: Colors.grey,
-                                      fontWeight: FontWeight.normal)),
-                            );
-                          }
-                          return ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            itemCount: list.length,
-                            itemBuilder: (_, i) {
-                              final a = list[i];
-                              final snippet = a.text.length > 80
-                                  ? '${a.text.substring(0, 80)}...'
-                                  : a.text;
-                              return ListTile(
-                                dense: false,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 6),
-                                title: Text(snippet,
-                                    style: _menuQuranStyle(
-                                        fontSize: 18,
-                                        color: const Color(0xFF1B5E20),
-                                        fontWeight: FontWeight.normal)),
-                                subtitle: Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                      '${a.suraNameAr} — آية ${a.ayaNo} — ص ${a.page}',
-                                      style: _menuQuranStyle(
-                                          fontSize: 15,
-                                          color: const Color(0xFF2E7D32),
-                                          fontWeight: FontWeight.w600)),
+                                      color: const Color(0xFFE53935),
+                                      fontWeight: FontWeight.w600),
                                 ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // --- قسم نتائج البحث الصوتي ---
+                            if (hasVoiceResults || hasVoiceActivity) ...[
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 6, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    const Expanded(child: Divider()),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            isListening
+                                                ? Icons.mic
+                                                : Icons.mic_none_rounded,
+                                            size: 16,
+                                            color: isListening
+                                                ? const Color(0xFFE53935)
+                                                : Colors.grey,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            isListening
+                                                ? 'جاري الاستماع...'
+                                                : 'اقتراحات من القراءة الصوتية',
+                                            style: _menuQuranStyle(
+                                                fontSize: 13,
+                                                color: isListening
+                                                    ? const Color(0xFFE53935)
+                                                    : Colors.grey,
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Expanded(child: Divider()),
+                                  ],
+                                ),
+                              ),
+
+                              // رسالة الحالة (خطأ / لا نتائج)
+                              if (!isListening &&
+                                  vStatus.isNotEmpty &&
+                                  !hasVoiceResults)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 4),
+                                  child: Text(
+                                    vStatus,
+                                    textAlign: TextAlign.center,
+                                    style: _menuQuranStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey,
+                                        fontWeight: FontWeight.normal),
+                                  ),
+                                ),
+
+                              // نتائج صوتية
+                              for (final v in vr)
+                                ListTile(
+                                  leading: Stack(
+                                    alignment: Alignment.bottomLeft,
+                                    children: [
+                                      const Icon(Icons.record_voice_over,
+                                          color: Color(0xFF1565C0), size: 28),
+                                      if (v.isFuzzy)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 3, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1565C0),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            '~',
+                                            style: _menuQuranStyle(
+                                                fontSize: 10,
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  title: Text(
+                                    v.ayahText.length > 80
+                                        ? '${v.ayahText.substring(0, 80)}...'
+                                        : v.ayahText,
+                                    style: _menuQuranStyle(
+                                        fontSize: 17,
+                                        color: const Color(0xFF0D47A1),
+                                        fontWeight: FontWeight.normal),
+                                  ),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${v.surahName} — آية ${_toNormalDigits(v.ayahNumber)} — ص ${_toNormalDigits(v.pageNumber)}',
+                                            style: _menuQuranStyle(
+                                                fontSize: 13,
+                                                color: const Color(0xFF1565C0),
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1565C0)
+                                                .withValues(alpha: 0.12),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                          child: Text(
+                                            '${(v.confidenceScore.isFinite ? (v.confidenceScore * 100).round() : 0)}%',
+                                            style: _menuQuranStyle(
+                                                fontSize: 12,
+                                                color: const Color(0xFF0D47A1),
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  onTap: () {
+                                    if (dialogClosed ||
+                                        didSelectVoiceResult) {
+                                      return;
+                                    }
+                                    final page = v.pageNumber;
+                                    didSelectVoiceResult = true;
+                                    dialogClosed = true;
+                                    voiceSearchGeneration++;
+                                    searchDebounce?.cancel();
+                                    speechSub?.cancel();
+                                    speechSub = null;
+                                    NativeSpeechService.instance
+                                        .cancelListening()
+                                        .catchError((Object e,
+                                            StackTrace st) {
+                                      debugPrint(
+                                          'Voice result cancel failed: $e\n$st');
+                                    });
+                                    Navigator.of(dialogContext,
+                                            rootNavigator: true)
+                                        .pop(page);
+                                  },
+                                ),
+                            ],
+
+                            // --- اقتراح الصفحة ---
+                            if (ph != null)
+                              ListTile(
+                                leading: const Icon(
+                                    Icons.menu_book_outlined,
+                                    color: Color(0xFF2E7D32),
+                                    size: 28),
+                                title: Text(
+                                  'الصفحة ${_toNormalDigits(ph)}',
+                                  style: _menuQuranStyle(
+                                      fontSize: 18,
+                                      color: const Color(0xFF1B5E20),
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                subtitle: Text(
+                                  'الانتقال إلى الصفحة مباشرة',
+                                  style: _menuQuranStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.normal),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
                                 onTap: () {
                                   _dismissAllMenuOverlays(ctx);
-                                  _navigateToPage(a.page);
+                                  _navigateToPage(ph);
                                 },
-                              );
-                            },
-                          );
-                        },
-                      ),
+                              ),
+
+                            // --- اقتراحات السور ---
+                            for (final s in sh)
+                              ListTile(
+                                leading: const Icon(
+                                    Icons.format_list_numbered,
+                                    color: Color(0xFF2E7D32),
+                                    size: 26),
+                                title: Text(
+                                  'سورة ${s.nameAr}',
+                                  style: _menuQuranStyle(
+                                      fontSize: 18,
+                                      color: const Color(0xFF1B5E20),
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                subtitle: Text(
+                                  'تبدأ من الصفحة ${_toNormalDigits(s.startPage)}',
+                                  style: _menuQuranStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.normal),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                onTap: () {
+                                  _dismissAllMenuOverlays(ctx);
+                                  _navigateToPage(s.startPage);
+                                },
+                              ),
+
+                            // --- فاصل «نتائج الآيات» ---
+                            if ((hasHints || hasVoiceResults) && hasResults)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 8, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    const Expanded(child: Divider()),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10),
+                                      child: Text(
+                                        'نتائج الآيات',
+                                        style: _menuQuranStyle(
+                                            fontSize: 13,
+                                            color: Colors.grey,
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                    const Expanded(child: Divider()),
+                                  ],
+                                ),
+                              ),
+
+                            // --- نتائج الآيات (lazy) ---
+                            if (hasResults)
+                              Expanded(
+                                child: ListView.builder(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 4),
+                                  itemCount: list.length,
+                                  itemBuilder: (_, i) {
+                                    final a = list[i];
+                                    final snippet = a.text.length > 80
+                                        ? '${a.text.substring(0, 80)}...'
+                                        : a.text;
+                                    return ListTile(
+                                      dense: false,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 6),
+                                      title: Text(snippet,
+                                          style: _menuQuranStyle(
+                                              fontSize: 18,
+                                              color: const Color(0xFF1B5E20),
+                                              fontWeight: FontWeight.normal)),
+                                      subtitle: Padding(
+                                        padding:
+                                            const EdgeInsets.only(top: 4),
+                                        child: Text(
+                                          '${a.suraNameAr} — آية ${_toNormalDigits(a.ayaNo)} — ص ${_toNormalDigits(a.page)}',
+                                          style: _menuQuranStyle(
+                                              fontSize: 15,
+                                              color: const Color(0xFF2E7D32),
+                                              fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      onTap: () {
+                                        _dismissAllMenuOverlays(ctx);
+                                        _navigateToPage(a.page);
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -8030,12 +8912,38 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             ),
           ),
         ),
-      ),
-    ).whenComplete(() {
+      );
+      },
+    );
+    } finally {
+      dialogClosed = true;
+      didSelectVoiceResult = true;
+      voiceSearchGeneration++;
+      searchDebounce?.cancel();
+      await speechSub?.cancel();
+      speechSub = null;
+      // إيقاف الميكروفون إذا كان نشطاً عند الإغلاق
+      try {
+        await NativeSpeechService.instance.cancelListening();
+      } catch (e, st) {
+        debugPrint('Search dialog cancelListening failed: $e\n$st');
+      }
+      debugPrint('SEARCH_DIALOG cleanup: dispose controller');
       queryText.dispose();
+      pageHint.dispose();
+      surahHints.dispose();
       results.dispose();
+      isVoiceListening.dispose();
+      voiceResults.dispose();
+      voiceStatus.dispose();
+      textController.dispose();
       MushafRamIdleExpander.instance.endBlockingUi();
-    });
+    }
+
+    if (!mounted) return;
+    if (selectedVoicePage != null) {
+      _navigateToPage(selectedVoicePage);
+    }
   }
 
   void _showFihrist(BuildContext context, int currentIndex) {
@@ -8046,10 +8954,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: DraggableScrollableSheet(
             initialChildSize: 0.6,
@@ -8205,10 +9113,10 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       context: context,
       horizontallyRotatedReading: _isHorizontallyRotatedReading,
       isScrollControlled: true,
-      backgroundColor: _menuPal.surface,
+      backgroundColor: _kMenuSheetChrome,
       builder: (ctx) => _wrapMainMenuFamilyOverlay(
         ctx,
-        Directionality(
+        bodyBuilder: (ctx) => Directionality(
           textDirection: TextDirection.rtl,
           child: DraggableScrollableSheet(
             initialChildSize: 0.6,
@@ -8302,7 +9210,7 @@ class _QuranPageViewerState extends State<QuranPageViewer>
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => _wrapMainMenuFamilyOverlay(
         sheetCtx,
-        _PageNumberPickerSheet(
+        bodyBuilder: (innerCtx) => _PageNumberPickerSheet(
           initialPage: initialPage,
           toNormalDigits: _toNormalDigits,
           arabicFontFamily: _arabicUiFontFamily,
@@ -8312,13 +9220,682 @@ class _QuranPageViewerState extends State<QuranPageViewer>
             fontWeight: FontWeight.w600,
           ),
           menuPalette: _menuPal,
-          onDismissAll: () => _dismissAllMenuOverlays(sheetCtx),
+          onDismissAll: () => _dismissAllMenuOverlays(innerCtx),
           onApply: (page) {
             _navigateToPage(page);
           },
         ),
       ),
     ).whenComplete(MushafRamIdleExpander.instance.endBlockingUi);
+  }
+}
+
+typedef _QuranSearchSelection = ({
+  int page,
+  int? suraNo,
+  int? ayahNo,
+});
+
+class _QuranSearchDialog extends StatefulWidget {
+  const _QuranSearchDialog({
+    required this.ayahList,
+    required this.suraList,
+    required this.totalPages,
+    required this.quranStyle,
+    required this.toNormalDigits,
+  });
+
+  final List<({int page, int suraNo, int ayaNo, String suraNameAr, String text})>
+      ayahList;
+  final List<({int no, String nameAr, int startPage})> suraList;
+  final int totalPages;
+  final TextStyle Function({
+    required double fontSize,
+    required Color color,
+    FontWeight fontWeight,
+  }) quranStyle;
+  final String Function(int value) toNormalDigits;
+
+  @override
+  State<_QuranSearchDialog> createState() => _QuranSearchDialogState();
+}
+
+class _QuranSearchDialogState extends State<_QuranSearchDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  Timer? _searchDebounce;
+  StreamSubscription<NativeSpeechEvent>? _speechSub;
+
+  String _queryText = '';
+  int? _pageHint;
+  List<({int no, String nameAr, int startPage})> _surahHints = [];
+  List<({int page, int suraNo, int ayaNo, String suraNameAr, String text})>
+      _textResults = [];
+  List<VoiceAyahSearchResult> _voiceResults = [];
+  String _voiceStatus = '';
+  bool _isListening = false;
+  bool _disposedOrClosing = false;
+  int _voiceSearchGeneration = 0;
+
+  /// خط واجهة عادي — بدون خط المصحف حتى لا تُعرَض الأرقام كعلامات آية.
+  TextStyle _searchUiStyle({
+    required double fontSize,
+    required Color color,
+    FontWeight fontWeight = FontWeight.normal,
+  }) {
+    return TextStyle(
+      fontSize: fontSize,
+      color: color,
+      fontWeight: fontWeight,
+    );
+  }
+
+  @override
+  void dispose() {
+    _disposedOrClosing = true;
+    _voiceSearchGeneration++;
+    _searchDebounce?.cancel();
+    _speechSub?.cancel();
+    try {
+      unawaited(NativeSpeechService.instance.cancelListening());
+    } catch (_) {}
+    _controller.dispose();
+    super.dispose();
+  }
+
+  static String _normalizeForSearch(String s) {
+    String n = s
+        .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
+        .replaceAll(RegExp(r'[\u0610-\u061A\u0640]'), '')
+        .replaceAll('ٱ', 'ا')
+        .replaceAll('أ', 'ا')
+        .replaceAll('إ', 'ا')
+        .replaceAll('آ', 'ا')
+        .replaceAll('ء', 'ا')
+        .replaceAll('ؤ', 'و')
+        .replaceAll('ئ', 'ي')
+        .replaceAll('ى', 'ي')
+        .replaceAll('ة', 'ه')
+        .replaceAll('٠', '0')
+        .replaceAll('١', '1')
+        .replaceAll('٢', '2')
+        .replaceAll('٣', '3')
+        .replaceAll('٤', '4')
+        .replaceAll('٥', '5')
+        .replaceAll('٦', '6')
+        .replaceAll('٧', '7')
+        .replaceAll('٨', '8')
+        .replaceAll('٩', '9');
+    return n.toLowerCase();
+  }
+
+  static int? _parseArabicOrLatinInt(String s) {
+    const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    final buf = StringBuffer();
+    for (var i = 0; i < t.length; i++) {
+      final c = t[i];
+      final aIdx = arabicDigits.indexOf(c);
+      if (aIdx >= 0) {
+        buf.write(aIdx);
+      } else if (c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39) {
+        buf.write(c);
+      } else {
+        return null;
+      }
+    }
+    return int.tryParse(buf.toString());
+  }
+
+  static String _normalizeSurahQuery(String s) {
+    var n = _normalizeForSearch(s).trim();
+    if (n.startsWith('ال ')) {
+      n = n.substring(3).trim();
+    } else if (n.startsWith('ال') && n.length > 2) {
+      n = n.substring(2).trim();
+    }
+    return n;
+  }
+
+  List<({int no, String nameAr, int startPage})> _searchSurahByName(
+    String query,
+  ) {
+    final nq = _normalizeSurahQuery(query);
+    if (nq.length < 2) return [];
+    return widget.suraList.where((s) {
+      final ns = _normalizeSurahQuery(s.nameAr);
+      return ns.contains(nq) || nq.contains(ns);
+    }).take(5).toList();
+  }
+
+  void _runTextSearch(String q) {
+    if (!mounted || _disposedOrClosing) return;
+    final t = q.trim();
+    if (t.isEmpty) {
+      setState(() {
+        _pageHint = null;
+        _surahHints = [];
+        _textResults = [];
+      });
+      return;
+    }
+    final pageNum = _parseArabicOrLatinInt(t);
+    final nq = _normalizeForSearch(t);
+    setState(() {
+      _pageHint = pageNum != null && pageNum >= 1 && pageNum <= widget.totalPages
+          ? pageNum
+          : null;
+      _surahHints = _searchSurahByName(t);
+      _textResults = widget.ayahList
+          .where((a) => _normalizeForSearch(a.text).contains(nq))
+          .take(200)
+          .toList();
+    });
+  }
+
+  void _onManualQueryChanged(String value) {
+    if (!mounted || _disposedOrClosing) return;
+    _searchDebounce?.cancel();
+    setState(() {
+      _queryText = value;
+      _voiceResults = [];
+      _voiceStatus = '';
+      if (value.trim().isEmpty) {
+        _pageHint = null;
+        _surahHints = [];
+        _textResults = [];
+      }
+    });
+    if (value.trim().isEmpty) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      _runTextSearch(value);
+    });
+  }
+
+  Future<void> _onVoiceTranscript(String text) async {
+    if (!mounted || _disposedOrClosing) return;
+    _controller.text = text;
+    _controller.selection = TextSelection.collapsed(offset: text.length);
+    _searchDebounce?.cancel();
+    setState(() {
+      _queryText = text;
+      _pageHint = null;
+      _surahHints = [];
+      _textResults = [];
+    });
+    if (text.trim().isEmpty) return;
+    final generation = ++_voiceSearchGeneration;
+    try {
+      final found = await VoiceAyahSearchService.instance.search(text);
+      if (!mounted ||
+          _disposedOrClosing ||
+          generation != _voiceSearchGeneration) {
+        return;
+      }
+      setState(() {
+        _voiceResults = found;
+        _voiceStatus = found.isEmpty
+            ? 'لم نسمع قراءة واضحة. قرّب الميكروفون وجرّب مرة أخرى.'
+            : '';
+      });
+    } catch (e, st) {
+      debugPrint('Voice ayah search failed: $e\n$st');
+      if (!mounted ||
+          _disposedOrClosing ||
+          generation != _voiceSearchGeneration) {
+        return;
+      }
+      setState(() {
+        _voiceResults = [];
+        _voiceStatus =
+            'تعذّر تحليل القراءة الصوتية. اقرأ بوضوح وحاول مرة أخرى.';
+      });
+    }
+  }
+
+  Future<void> _toggleVoiceSearch() async {
+    if (_disposedOrClosing) return;
+    if (_isListening) {
+      try {
+        await NativeSpeechService.instance.stopListening();
+      } catch (_) {}
+      await _speechSub?.cancel();
+      _speechSub = null;
+      if (!mounted || _disposedOrClosing) return;
+      setState(() {
+        _isListening = false;
+        _voiceStatus = '';
+      });
+      return;
+    }
+
+    try {
+      final available = await NativeSpeechService.instance.isAvailable();
+      if (!available) {
+        if (mounted && !_disposedOrClosing) {
+          setState(() => _voiceStatus = _voiceSearchErrorForEvent());
+        }
+        return;
+      }
+      var hasPerm = await NativeSpeechService.instance.hasPermission();
+      if (!hasPerm) {
+        hasPerm = await NativeSpeechService.instance.requestPermission();
+      }
+      if (!hasPerm) {
+        if (mounted && !_disposedOrClosing) {
+          setState(() =>
+              _voiceStatus = _voiceSearchErrorForEvent(permissionDenied: true));
+        }
+        return;
+      }
+    } catch (e, st) {
+      debugPrint('Voice search permission check failed: $e\n$st');
+      if (mounted && !_disposedOrClosing) {
+        setState(() => _voiceStatus = _voiceSearchErrorForEvent());
+      }
+      return;
+    }
+
+    if (!mounted || _disposedOrClosing) return;
+    setState(() {
+      _voiceResults = [];
+      _voiceStatus = 'جاري الاستماع...';
+      _isListening = true;
+    });
+
+    await _speechSub?.cancel();
+    _speechSub = NativeSpeechService.instance.events.listen(
+      (event) async {
+        if (!mounted || _disposedOrClosing) return;
+        if (event.type == 'result') {
+          final text = event.text?.trim() ?? '';
+          if (text.isEmpty) return;
+          if (event.isFinal || text.split(' ').length >= 3) {
+            await _onVoiceTranscript(text);
+          } else if (mounted && !_disposedOrClosing) {
+            _controller.text = text;
+            _controller.selection = TextSelection.collapsed(offset: text.length);
+            _searchDebounce?.cancel();
+            setState(() {
+              _queryText = text;
+              _pageHint = null;
+              _surahHints = [];
+              _textResults = [];
+            });
+          }
+          if (event.isFinal) {
+            await _speechSub?.cancel();
+            _speechSub = null;
+            if (!mounted || _disposedOrClosing) return;
+            setState(() => _isListening = false);
+          }
+        } else if (event.type == 'status' && event.status == 'stopped') {
+          if (mounted && !_disposedOrClosing && _isListening) {
+            setState(() => _isListening = false);
+          }
+        } else if (event.type == 'error') {
+          await _speechSub?.cancel();
+          _speechSub = null;
+          if (!mounted || _disposedOrClosing) return;
+          setState(() {
+            _voiceStatus = _voiceSearchErrorForEvent(code: event.code);
+            _isListening = false;
+          });
+        }
+      },
+      onError: (Object e, StackTrace st) {
+        debugPrint('Speech stream error: $e\n$st');
+        if (mounted && !_disposedOrClosing) {
+          setState(() {
+            _voiceStatus = _voiceSearchErrorForEvent();
+            _isListening = false;
+          });
+        }
+      },
+    );
+
+    try {
+      await NativeSpeechService.instance.startListening(
+        locale: 'ar',
+        partialResults: true,
+        continuous: false,
+      );
+    } catch (e, st) {
+      debugPrint('startListening failed: $e\n$st');
+      await _speechSub?.cancel();
+      _speechSub = null;
+      if (!mounted || _disposedOrClosing) return;
+      setState(() {
+        _voiceStatus = _voiceSearchErrorForEvent();
+        _isListening = false;
+      });
+    }
+  }
+
+  void _selectPage(int page) {
+    _popSelection((page: page, suraNo: null, ayahNo: null));
+  }
+
+  void _selectAyah({
+    required int page,
+    required int suraNo,
+    required int ayahNo,
+  }) {
+    _popSelection((page: page, suraNo: suraNo, ayahNo: ayahNo));
+  }
+
+  void _popSelection(_QuranSearchSelection selection) {
+    if (_disposedOrClosing) return;
+    _disposedOrClosing = true;
+    _voiceSearchGeneration++;
+    _searchDebounce?.cancel();
+    _speechSub?.cancel();
+    try {
+      unawaited(NativeSpeechService.instance.cancelListening());
+    } catch (_) {}
+    Navigator.of(context, rootNavigator: true).pop(selection);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final validVoiceResults = _voiceResults
+        .where((v) =>
+            v.pageNumber >= 1 &&
+            v.pageNumber <= widget.totalPages &&
+            v.ayahText.trim().isNotEmpty &&
+            v.confidenceScore.isFinite)
+        .take(5)
+        .toList(growable: false);
+    final hasVoiceResults = validVoiceResults.isNotEmpty;
+    final hasVoiceActivity = _isListening || _voiceStatus.isNotEmpty;
+    final hasHints = _pageHint != null || _surahHints.isNotEmpty;
+    final hasTextResults = _textResults.isNotEmpty;
+    final items = <Widget>[];
+
+    if (_queryText.trim().isEmpty && !hasVoiceActivity && !hasVoiceResults) {
+      items.add(_buildMessage(
+        'اكتب نص الآية، اسم السورة، أو رقم الصفحة\nأو اضغط على المايك للبحث بالصوت',
+      ));
+    } else if (!hasHints &&
+        !hasTextResults &&
+        !hasVoiceResults &&
+        !hasVoiceActivity) {
+      items.add(_buildMessage('لم يتم العثور على نتائج مطابقة.'));
+    } else {
+      if (hasVoiceResults || hasVoiceActivity) {
+        items.add(_buildSectionHeader(
+          _isListening ? 'جاري الاستماع...' : 'اقتراحات من القراءة الصوتية',
+          icon: _isListening ? Icons.mic : Icons.mic_none_rounded,
+          color: _isListening ? const Color(0xFFE53935) : Colors.grey,
+        ));
+        if (!_isListening && _voiceStatus.isNotEmpty && !hasVoiceResults) {
+          items.add(_buildMessage(_voiceStatus, fontSize: 14));
+        }
+        for (final v in validVoiceResults) {
+          items.add(_buildVoiceResultTile(v));
+        }
+      }
+
+      if (_pageHint != null) items.add(_buildPageTile(_pageHint!));
+      for (final s in _surahHints) {
+        items.add(_buildSurahTile(s));
+      }
+      if ((hasHints || hasVoiceResults) && hasTextResults) {
+        items.add(_buildSectionHeader('نتائج الآيات'));
+      }
+      for (final a in _textResults) {
+        items.add(_buildTextResultTile(a));
+      }
+    }
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        contentPadding: EdgeInsets.zero,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+        titlePadding: EdgeInsets.zero,
+        title: NestedQuranMenuAppBar(
+          title: 'بحث في الآيات',
+          titleStyle: _searchUiStyle(
+            fontSize: 20,
+            color: const Color(0xFF1B5E20),
+            fontWeight: FontWeight.w600,
+          ),
+          onBack: () => Navigator.of(context, rootNavigator: true).maybePop(),
+          onDismissAll: () =>
+              Navigator.of(context, rootNavigator: true).maybePop(),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.of(context).size.height * 0.8,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: TextField(
+                  controller: _controller,
+                  style: _searchUiStyle(
+                    fontSize: 18,
+                    color: Colors.black87,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'اكتب جزءاً من الآية، اسم السورة، أو رقم الصفحة',
+                    hintStyle: _searchUiStyle(
+                      fontSize: 13,
+                      color: Colors.grey,
+                    ),
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic : Icons.mic_none_rounded,
+                        color: _isListening
+                            ? const Color(0xFFE53935)
+                            : const Color(0xFF2E7D32),
+                      ),
+                      tooltip: _isListening ? 'إيقاف الاستماع' : 'بحث بالصوت',
+                      onPressed: _toggleVoiceSearch,
+                    ),
+                  ),
+                  onChanged: _onManualQueryChanged,
+                  autofocus: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  itemCount: items.length,
+                  itemBuilder: (_, i) => items[i],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessage(String message, {double fontSize = 15}) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: _searchUiStyle(
+          fontSize: fontSize,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(
+    String label, {
+    IconData? icon,
+    Color color = Colors.grey,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: Row(
+        children: [
+          const Expanded(child: Divider()),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: color),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  label,
+                  style: _searchUiStyle(
+                    fontSize: 13,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Expanded(child: Divider()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPageTile(int page) {
+    return ListTile(
+      leading: const Icon(Icons.menu_book_outlined,
+          color: Color(0xFF2E7D32), size: 28),
+      title: Text(
+        'الصفحة ${widget.toNormalDigits(page)}',
+        style: _searchUiStyle(
+          fontSize: 18,
+          color: const Color(0xFF1B5E20),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      subtitle: Text(
+        'الانتقال إلى الصفحة مباشرة',
+        style: _searchUiStyle(
+          fontSize: 13,
+          color: Colors.grey,
+        ),
+      ),
+      onTap: () => _selectPage(page),
+    );
+  }
+
+  Widget _buildSurahTile(({int no, String nameAr, int startPage}) s) {
+    return ListTile(
+      leading: const Icon(Icons.format_list_numbered,
+          color: Color(0xFF2E7D32), size: 26),
+      title: Text(
+        'سورة ${s.nameAr}',
+        style: _searchUiStyle(
+          fontSize: 18,
+          color: const Color(0xFF1B5E20),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      subtitle: Text(
+        'تبدأ من الصفحة ${widget.toNormalDigits(s.startPage)}',
+        style: _searchUiStyle(
+          fontSize: 13,
+          color: Colors.grey,
+        ),
+      ),
+      onTap: () => _selectPage(s.startPage),
+    );
+  }
+
+  Widget _buildVoiceResultTile(VoiceAyahSearchResult v) {
+    final snippet =
+        v.ayahText.length > 80 ? '${v.ayahText.substring(0, 80)}...' : v.ayahText;
+    return ListTile(
+      leading: const Icon(Icons.record_voice_over,
+          color: Color(0xFF1565C0), size: 28),
+      title: Text(
+        snippet,
+        style: widget.quranStyle(
+          fontSize: 17,
+          color: const Color(0xFF0D47A1),
+          fontWeight: FontWeight.normal,
+        ),
+      ),
+      subtitle: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${v.surahName} — آية ${widget.toNormalDigits(v.ayahNumber)} — ص ${widget.toNormalDigits(v.pageNumber)}',
+              style: _searchUiStyle(
+                fontSize: 13,
+                color: const Color(0xFF1565C0),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1565C0).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${(v.confidenceScore * 100).round()}%',
+              style: _searchUiStyle(
+                fontSize: 12,
+                color: const Color(0xFF0D47A1),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+      onTap: () => _selectAyah(
+        page: v.pageNumber,
+        suraNo: v.surahNumber,
+        ayahNo: v.ayahNumber,
+      ),
+    );
+  }
+
+  Widget _buildTextResultTile(
+    ({int page, int suraNo, int ayaNo, String suraNameAr, String text}) a,
+  ) {
+    final snippet =
+        a.text.length > 80 ? '${a.text.substring(0, 80)}...' : a.text;
+    return ListTile(
+      title: Text(
+        snippet,
+        style: widget.quranStyle(
+          fontSize: 18,
+          color: const Color(0xFF1B5E20),
+          fontWeight: FontWeight.normal,
+        ),
+      ),
+      subtitle: Text(
+        '${a.suraNameAr} — آية ${widget.toNormalDigits(a.ayaNo)} — ص ${widget.toNormalDigits(a.page)}',
+        style: _searchUiStyle(
+          fontSize: 15,
+          color: const Color(0xFF2E7D32),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      onTap: () => _selectAyah(
+        page: a.page,
+        suraNo: a.suraNo,
+        ayahNo: a.ayaNo,
+      ),
+    );
   }
 }
 
@@ -10260,7 +11837,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'تعذر تشغيل صوت المجموعة',
+              'تعذّر تشغيل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.',
               style: widget.quranStyle(fontSize: 14, color: Colors.white),
             ),
             backgroundColor: const Color(0xFFB71C1C),
@@ -10279,7 +11856,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'انتهت مهلة تحميل الصوت، جرّب مرة أخرى',
+            'استغرق تحميل الصوت وقتاً طويلاً. تحقق من الشبكة وحاول مرة أخرى.',
             style: widget.quranStyle(fontSize: 14, color: Colors.white),
           ),
           backgroundColor: const Color(0xFFB71C1C),
@@ -10297,7 +11874,7 @@ class _AzkarSheetContentState extends State<_AzkarSheetContent> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'تعذر تشغيل صوت المجموعة',
+            'تعذّر تشغيل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.',
             style: widget.quranStyle(fontSize: 14, color: Colors.white),
           ),
           backgroundColor: const Color(0xFFB71C1C),

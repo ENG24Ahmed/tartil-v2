@@ -62,6 +62,10 @@ class AyahAudioPlayer extends ChangeNotifier {
   /// جلسة تشغيل أذكار (نفس [AudioPlayer] والإشعار، يحل محل التلاوة).
   bool _azkarSession = false;
 
+  /// أثناء شاشة التسميع الذكي: تلاوة الآية «مرة واحدة» فقط (لا تكرار ولا متابعة)،
+  /// دون تعديل تفضيلات المستخدم في الوضع العادي.
+  bool _recitationAyahSessionActive = false;
+
   /// صوت البسملة (سورة 1 آية 1 - النفيس) يُشغّل قبل آية 1 عند الانتقال من سورة إلى سورة جديدة في الوضع المتواصل.
   static const String _basmallahTransitionUrl =
       'https://audio-cdn.tarteel.ai/quran/alnufais/001001.mp3';
@@ -117,7 +121,26 @@ class AyahAudioPlayer extends ChangeNotifier {
     _playbackRange = await AyahRecitersPrefs.instance.getPlaybackRange();
     _showAyahHighlight =
         await AyahRecitersPrefs.instance.getShowAyahHighlight();
+    if (_recitationAyahSessionActive) {
+      _playbackMode = AyahPlaybackMode.once;
+    }
     _prefsLoaded = true;
+    notifyListeners();
+  }
+
+  /// يُستدعى عند فتح [RecitationScreen] — يقيّد تلاوة الآيات على «بدون تكرار».
+  void enterRecitationAyahSession() {
+    _recitationAyahSessionActive = true;
+    _playbackMode = AyahPlaybackMode.once;
+    notifyListeners();
+  }
+
+  /// يُستدعى عند إغلاق التسميع — يعيد قراءة وضع التشغيل من التفضيلات.
+  Future<void> leaveRecitationAyahSession() async {
+    _recitationAyahSessionActive = false;
+    try {
+      _playbackMode = await AyahRecitersPrefs.instance.getPlaybackMode();
+    } catch (_) {}
     notifyListeners();
   }
 
@@ -187,6 +210,9 @@ class AyahAudioPlayer extends ChangeNotifier {
     if (ps.processingState == ProcessingState.completed) {
       _state = AyahPlayerState.completed;
       if (_playbackMode == AyahPlaybackMode.once) {
+        if (_usingQueue) {
+          _clearQueueState();
+        }
         _currentSura = null;
         _currentAyah = null;
         _segments = const [];
@@ -532,7 +558,8 @@ class AyahAudioPlayer extends ChangeNotifier {
 
     final map = await _getReciterMap(rid);
     if (map == null) {
-      _errorMessage = 'تعذر تحميل بيانات القارئ';
+      _errorMessage =
+          'تعذّر تحميل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
       _state = AyahPlayerState.error;
       notifyListeners();
       return false;
@@ -550,7 +577,11 @@ class AyahAudioPlayer extends ChangeNotifier {
     _currentSura = sura;
     _currentAyah = ayah;
     _state = AyahPlayerState.loading;
-    _playbackMode = await AyahRecitersPrefs.instance.getPlaybackMode();
+    if (_recitationAyahSessionActive) {
+      _playbackMode = AyahPlaybackMode.once;
+    } else {
+      _playbackMode = await AyahRecitersPrefs.instance.getPlaybackMode();
+    }
     notifyListeners();
 
     try {
@@ -590,7 +621,8 @@ class AyahAudioPlayer extends ChangeNotifier {
       await _player.play();
       return true;
     } catch (e) {
-      _errorMessage = 'تعذر تشغيل التلاوة';
+      _errorMessage =
+          'تعذّر تشغيل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
       _state = AyahPlayerState.error;
       notifyListeners();
       return false;
@@ -694,13 +726,15 @@ class AyahAudioPlayer extends ChangeNotifier {
     } catch (e) {
       _azkarSession = false;
       _state = AyahPlayerState.error;
-      _errorMessage = 'تعذر تشغيل صوت الأذكار';
+      _errorMessage =
+          'تعذّر تشغيل الصوت. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
       notifyListeners();
       return false;
     }
   }
 
   Future<void> cyclePlaybackMode() async {
+    if (_recitationAyahSessionActive) return;
     final wasPlaying = _state == AyahPlayerState.playing;
     final wasPaused = _state == AyahPlayerState.paused;
     final currentSura = _currentSura;

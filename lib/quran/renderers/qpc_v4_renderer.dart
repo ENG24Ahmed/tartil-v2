@@ -14,7 +14,44 @@ import 'package:quran_app/quran/quran_db.dart';
 import 'package:quran_app/quran/compact_line_spacing_scope.dart';
 import 'package:quran_app/quran/mushaf_page_layout.dart';
 import 'package:quran_app/quran/mushaf_ayah_highlight.dart';
+import 'package:quran_app/quran/temporary_search_ayah_highlight.dart';
 import 'package:quran_app/services/qpc_glyph_db.dart';
+
+const Color _kTemporarySearchHighlightColor = Color(0xFFD4AF37);
+const double _kTemporarySearchHighlightAlpha = 0.22;
+
+void appendTemporarySearchHighlightBar(
+  List<Widget> overlayWidgets, {
+  required TextPainter painter,
+  required MushafPageLine line,
+  required TextStyle style,
+  required (int, int, int)? lineTemporarySearch,
+  required double temporarySearchOpacity,
+}) {
+  if (lineTemporarySearch == null || temporarySearchOpacity <= 0.001) return;
+  if (line.lineType != 'ayah') return;
+  if (lineTemporarySearch.$2 < 0 ||
+      lineTemporarySearch.$3 <= lineTemporarySearch.$2) {
+    return;
+  }
+  final ayahR = mushafRangeHorizontalRectWithFallback(
+    painter: painter,
+    text: line.lineText,
+    style: style,
+    startChar: lineTemporarySearch.$2.clamp(0, line.lineText.length),
+    endChar: lineTemporarySearch.$3.clamp(0, line.lineText.length),
+  );
+  if (ayahR.width <= 0.01) return;
+  overlayWidgets.add(
+    mushafFlatHighlightBar(
+      left: ayahR.left,
+      width: ayahR.width,
+      lineHeight: painter.height,
+      color: _kTemporarySearchHighlightColor,
+      alpha: _kTemporarySearchHighlightAlpha * temporarySearchOpacity,
+    ),
+  );
+}
 
 /// هامش يمين/أعلى/سفل من عرض أو ارتفاع المرجع — **2%** لكل طرف (موحّد مع هوامش `mushaf_page_layout`).
 const double kQpcPageMarginFraction = 0.02;
@@ -205,9 +242,29 @@ TextStyle _basmallahStyle({required double fontSize}) => TextStyle(
       color: Colors.black,
     );
 
+const int _kContentDimsCacheMaxEntries = 400;
+final Map<String, (double, double)> _contentDimsCache = {};
+
+String _contentDimsCacheKey(
+  List<MushafPageLine> pageLines,
+  TextStyle baseStyle,
+  double linePaddingBottom,
+) {
+  final n = pageLines.length;
+  final f0 = n > 0 ? pageLines.first.lineText : '';
+  final f0tag = f0.isEmpty ? 0 : f0.codeUnitAt(0);
+  final fontSize = (baseStyle.fontSize ?? 23).toStringAsFixed(2);
+  final pad = linePaddingBottom.toStringAsFixed(3);
+  return '$n|$f0tag|$fontSize|$pad';
+}
+
 (double, double) getQpcContentDimensions(
     List<MushafPageLine> pageLines, TextStyle baseStyle,
     {double linePaddingBottom = kNormalLinePaddingBottom}) {
+  final key = _contentDimsCacheKey(pageLines, baseStyle, linePaddingBottom);
+  final hit = _contentDimsCache[key];
+  if (hit != null) return hit;
+
   double maxW = 0;
   double totalH = 0;
   for (final line in pageLines) {
@@ -224,13 +281,25 @@ TextStyle _basmallahStyle({required double fontSize}) => TextStyle(
     if (painter.width > maxW) maxW = painter.width;
     totalH += painter.height + linePaddingBottom;
   }
-  return (maxW, totalH);
+  final result = (maxW, totalH);
+  if (_contentDimsCache.length >= _kContentDimsCacheMaxEntries) {
+    _contentDimsCache.remove(_contentDimsCache.keys.first);
+  }
+  _contentDimsCache[key] = result;
+  return result;
 }
+
+const int _kLineHeightsCacheMaxEntries = 400;
+final Map<String, List<double>> _lineHeightsCache = {};
 
 /// ارتفاعات الأسطر (لربط موضع الضغط بالسطر).
 List<double> getQpcLineHeights(
     List<MushafPageLine> pageLines, TextStyle baseStyle,
     {double linePaddingBottom = kNormalLinePaddingBottom}) {
+  final key = _contentDimsCacheKey(pageLines, baseStyle, linePaddingBottom);
+  final hit = _lineHeightsCache[key];
+  if (hit != null) return hit;
+
   final list = <double>[];
   for (final line in pageLines) {
     TextStyle s = baseStyle.copyWith(fontFamily: line.fontFamily);
@@ -245,6 +314,10 @@ List<double> getQpcLineHeights(
     )..layout(maxWidth: double.infinity);
     list.add(painter.height + linePaddingBottom);
   }
+  if (_lineHeightsCache.length >= _kLineHeightsCacheMaxEntries) {
+    _lineHeightsCache.remove(_lineHeightsCache.keys.first);
+  }
+  _lineHeightsCache[key] = list;
   return list;
 }
 
@@ -401,6 +474,7 @@ class QpcV4Renderer {
     113: 'سورة الفلق',
     114: 'سورة الناس',
   };
+
   /// [populateRamCache]: عطّله عند التسخين الجماعي للقرص حتى لا يُملأ كاش الرام بكل الصفحات.
   Future<List<MushafPageLine>> loadPage(int page,
       {bool populateRamCache = true}) async {
@@ -593,9 +667,7 @@ void preloadNearbyPages(
               maxR = maxR == null ? re : (re > maxR ? re : maxR);
             }
             if (minR != null && maxR != null && maxR >= minR) {
-              unawaited(
-                QuranDb.instance.prewarmWordToAyahMapping(minR, maxR),
-              );
+              unawaited(QuranDb.instance.prewarmWordToAyahMapping(minR, maxR));
             }
           }
           await loadQcf4Font(p);
@@ -620,6 +692,11 @@ class QpcV4PageView extends StatelessWidget {
   final bool hideAyahText;
   final bool lightweightMode;
   final bool mediumQualityMode;
+  static const int _v4UniformScaleCacheMaxEntries = 240;
+  static final Map<String, double> _v4UniformScaleCache = <String, double>{};
+  // Fix 1: نفس كائن Future في كل rebuild — يمنع FutureBuilder من إعادة التحميل
+  static final Map<int, Future<List<MushafPageLine>>> _pageLoadFutures =
+      <int, Future<List<MushafPageLine>>>{};
 
   static const TextStyle _baseStyle = TextStyle(
     fontSize: 23,
@@ -628,8 +705,6 @@ class QpcV4PageView extends StatelessWidget {
     wordSpacing: 0,
     fontFeatures: [FontFeature.disable('kern')],
   );
-  static const int _v4UniformScaleCacheMaxEntries = 240;
-  static final Map<String, double> _v4UniformScaleCache = <String, double>{};
 
   @override
   Widget build(BuildContext context) {
@@ -653,7 +728,8 @@ class QpcV4PageView extends StatelessWidget {
       );
     }
     return FutureBuilder<List<MushafPageLine>>(
-      future: loadQpcV4PageForDisplay(page),
+      future: _pageLoadFutures.putIfAbsent(
+          page, () => loadQpcV4PageForDisplay(page)),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return ColoredBox(
@@ -662,13 +738,14 @@ class QpcV4PageView extends StatelessWidget {
           );
         }
         if (snapshot.hasError) {
-          return Center(
+          debugPrint('QPC V4 page load failed: ${snapshot.error}');
+          return const Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(24),
               child: Text(
-                'فشل تحميل الصفحة: ${snapshot.error}',
+                'تعذّر تحميل الصفحة. أعد المحاولة.',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16),
+                style: TextStyle(fontSize: 16),
               ),
             ),
           );
@@ -741,14 +818,14 @@ class QpcV4PageView extends StatelessWidget {
     }
     if (mediumQualityMode) {
       return _WordToAyahMappingLoader(
-        minRange: minR,
-        maxRange: maxR,
-        builder: (mapping) => _buildContent(
+        minR: minR,
+        maxR: maxR,
+        builder: (_, mapSnap) => _buildContent(
           context,
           page,
           pageLines,
           baseStyle,
-          mapping,
+          mapSnap.data,
           null,
           null,
           null,
@@ -757,15 +834,17 @@ class QpcV4PageView extends StatelessWidget {
       );
     }
     return _WordToAyahMappingLoader(
-      minRange: minR,
-      maxRange: maxR,
-      builder: (mapping) => _QpcV4PageContentStateful(
-        page: page,
-        pageLines: pageLines,
-        baseStyle: baseStyle,
-        mapping: mapping,
-        hideAyahText: hideAyahText,
-      ),
+      minR: minR,
+      maxR: maxR,
+      builder: (_, mapSnap) {
+        return _QpcV4PageContentStateful(
+          page: page,
+          pageLines: pageLines,
+          baseStyle: baseStyle,
+          mapping: mapSnap.data,
+          hideAyahText: hideAyahText,
+        );
+      },
     );
   }
 
@@ -783,23 +862,16 @@ class QpcV4PageView extends StatelessWidget {
 
   /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
   static double _computeV4UniformAyahScale(
-    int page,
     List<MushafPageLine> displayLines,
     double layoutW,
     double slotHeight,
     TextStyle effectiveBaseStyle,
     double lineStyleFontSizeScale,
   ) {
-    final cacheKey = [
-      page,
-      layoutW.toStringAsFixed(2),
-      slotHeight.toStringAsFixed(2),
-      (effectiveBaseStyle.fontSize ?? 23).toStringAsFixed(4),
-      lineStyleFontSizeScale.toStringAsFixed(4),
-    ].join('|');
+    final cacheKey =
+        '${displayLines.length}|${layoutW.toStringAsFixed(2)}|${slotHeight.toStringAsFixed(2)}|${(effectiveBaseStyle.fontSize ?? 23).toStringAsFixed(4)}|${lineStyleFontSizeScale.toStringAsFixed(4)}';
     final cached = _v4UniformScaleCache[cacheKey];
     if (cached != null) return cached;
-
     var minScale = 1.0;
     for (final line in displayLines) {
       if (line.lineType != 'ayah') continue;
@@ -841,6 +913,8 @@ class QpcV4PageView extends StatelessWidget {
     void Function()? onClearSelection, {
     (int, int, int)? wordSelection,
     List<(int, int, int, Color)>? persistentSelection,
+    List<(int lineIndex, int startChar, int endChar)>? temporarySearchSelection,
+    double temporarySearchOpacity = 0.0,
     bool hideAyahText = false,
   }) {
     return LayoutBuilder(
@@ -937,7 +1011,6 @@ class QpcV4PageView extends StatelessWidget {
             ((bodyStyle.fontSize ?? 23) / refBaseSize);
 
         final uniformAyahScale = _computeV4UniformAyahScale(
-          page,
           displayLines,
           contentW,
           slotHeight,
@@ -1068,10 +1141,19 @@ class QpcV4PageView extends StatelessWidget {
           }
           (int, int, int)? lineSelection;
           final linePersistentSelections = <(int, int, int, Color)>[];
+          (int, int, int)? lineTemporarySearch;
           if (selection != null) {
             for (final e in selection) {
               if (e.$1 == lineIndex) {
                 lineSelection = e;
+                break;
+              }
+            }
+          }
+          if (temporarySearchSelection != null) {
+            for (final e in temporarySearchSelection) {
+              if (e.$1 == lineIndex) {
+                lineTemporarySearch = e;
                 break;
               }
             }
@@ -1130,6 +1212,14 @@ class QpcV4PageView extends StatelessWidget {
                 color: const Color.fromARGB(255, 45, 45, 45),
                 alpha: 0.18,
               ),
+            );
+            appendTemporarySearchHighlightBar(
+              overlayWidgets,
+              painter: painter,
+              line: line,
+              style: justifiedStyle,
+              lineTemporarySearch: lineTemporarySearch,
+              temporarySearchOpacity: temporarySearchOpacity,
             );
             if (lineWordSelection != null &&
                 lineWordSelection.$2 >= 0 &&
@@ -1203,6 +1293,18 @@ class QpcV4PageView extends StatelessWidget {
             }
             if (rects.isEmpty) return lineWidget;
             final mergedRects = _mergePersistentRectsByColor(rects);
+            final tempOverlayWidgets = <Widget>[
+              for (final r in mergedRects)
+                _buildPersistentHighlightSegment(r, painter.height),
+            ];
+            appendTemporarySearchHighlightBar(
+              tempOverlayWidgets,
+              painter: painter,
+              line: line,
+              style: justifiedStyle,
+              lineTemporarySearch: lineTemporarySearch,
+              temporarySearchOpacity: temporarySearchOpacity,
+            );
             return Padding(
               padding: EdgeInsets.only(bottom: bodyLinePad),
               child: Align(
@@ -1226,15 +1328,62 @@ class QpcV4PageView extends StatelessWidget {
                         overflow: TextOverflow.visible,
                         style: renderedStyle,
                       ),
-                      overlayWidgets: [
-                        for (final r in mergedRects)
-                          _buildPersistentHighlightSegment(r, painter.height),
-                      ],
+                      overlayWidgets: tempOverlayWidgets,
                     ),
                   ),
                 ),
               ),
             );
+          }
+          if (lineTemporarySearch != null &&
+              line.lineType == 'ayah' &&
+              temporarySearchOpacity > 0.001 &&
+              lineTemporarySearch.$2 >= 0 &&
+              lineTemporarySearch.$3 > lineTemporarySearch.$2) {
+            final lineWidth =
+                mushafMeasureLineWidth(line.lineText, justifiedStyle);
+            final painter = mushafLaidOutRtlLinePainter(
+                line.lineText, justifiedStyle, lineWidth);
+            final tempOverlayWidgets = <Widget>[];
+            appendTemporarySearchHighlightBar(
+              tempOverlayWidgets,
+              painter: painter,
+              line: line,
+              style: justifiedStyle,
+              lineTemporarySearch: lineTemporarySearch,
+              temporarySearchOpacity: temporarySearchOpacity,
+            );
+            if (tempOverlayWidgets.isNotEmpty) {
+              return Padding(
+                padding: EdgeInsets.only(bottom: bodyLinePad),
+                child: Align(
+                  alignment: Alignment.center,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: painter.height,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: mushafHighlightLineStackFixed(
+                        lineWidth: lineWidth,
+                        lineHeight: painter.height,
+                        lineText: Text(
+                          line.lineText,
+                          textDirection: TextDirection.rtl,
+                          textAlign: line.isCentered
+                              ? TextAlign.center
+                              : TextAlign.right,
+                          softWrap: false,
+                          maxLines: 1,
+                          overflow: TextOverflow.visible,
+                          style: renderedStyle,
+                        ),
+                        overlayWidgets: tempOverlayWidgets,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
           }
           // عند إخفاء تضليل الآية أثناء الاستماع، نبقي تضليل الكلمة المقروءة فقط.
           if (lineWordSelection != null &&
@@ -1482,6 +1631,53 @@ class DelayedLongPressDetectorState extends State<DelayedLongPressDetector> {
   }
 }
 
+class _WordToAyahMappingLoader extends StatefulWidget {
+  const _WordToAyahMappingLoader({
+    required this.minR,
+    required this.maxR,
+    required this.builder,
+  });
+
+  final int minR;
+  final int maxR;
+  final Widget Function(
+    BuildContext context,
+    AsyncSnapshot<Map<int, (int, int)>> snapshot,
+  ) builder;
+
+  @override
+  State<_WordToAyahMappingLoader> createState() =>
+      _WordToAyahMappingLoaderState();
+}
+
+class _WordToAyahMappingLoaderState extends State<_WordToAyahMappingLoader> {
+  late Future<Map<int, (int, int)>> _mappingFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _mappingFuture =
+        QuranDb.instance.getWordToAyahMapping(widget.minR, widget.maxR);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WordToAyahMappingLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minR != widget.minR || oldWidget.maxR != widget.maxR) {
+      _mappingFuture =
+          QuranDb.instance.getWordToAyahMapping(widget.minR, widget.maxR);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<int, (int, int)>>(
+      future: _mappingFuture,
+      builder: widget.builder,
+    );
+  }
+}
+
 class _QpcV4PageContentStateful extends StatefulWidget {
   const _QpcV4PageContentStateful({
     required this.page,
@@ -1501,82 +1697,73 @@ class _QpcV4PageContentStateful extends StatefulWidget {
       _QpcV4PageContentStatefulState();
 }
 
-class _WordToAyahMappingLoader extends StatefulWidget {
-  const _WordToAyahMappingLoader({
-    required this.minRange,
-    required this.maxRange,
-    required this.builder,
-  });
-
-  final int minRange;
-  final int maxRange;
-  final Widget Function(Map<int, (int sura, int ayah)>? mapping) builder;
-
-  @override
-  State<_WordToAyahMappingLoader> createState() =>
-      _WordToAyahMappingLoaderState();
-}
-
-class _WordToAyahMappingLoaderState extends State<_WordToAyahMappingLoader> {
-  late Future<Map<int, (int sura, int ayah)>> _mappingFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _mappingFuture = QuranDb.instance.getWordToAyahMapping(
-      widget.minRange,
-      widget.maxRange,
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _WordToAyahMappingLoader oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.minRange != widget.minRange ||
-        oldWidget.maxRange != widget.maxRange) {
-      _mappingFuture = QuranDb.instance.getWordToAyahMapping(
-        widget.minRange,
-        widget.maxRange,
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Map<int, (int, int)>>(
-      future: _mappingFuture,
-      builder: (_, snapshot) => widget.builder(snapshot.data),
-    );
-  }
-}
-
 class _QpcV4PageContentStatefulState extends State<_QpcV4PageContentStateful> {
   List<(int, int, int)>? _selection; // تحديد الضغط الطويل (يدوي)
   List<(int, int, int)>? _audioSelection; // تضليل الآية أثناء الاستماع
   (int, int, int)? _wordSelection;
   List<(int, int, int, Color)>? _persistentSelection;
+  List<(int, int, int)>? _temporarySearchSelection;
+  double _temporarySearchOpacity = 0.0;
 
   @override
   void initState() {
     super.initState();
     AyahAudioPlayer.instance.addListener(_syncAudioHighlight);
     AyahHighlightStore.instance.addListener(_syncPersistentHighlights);
+    TemporarySearchAyahHighlightStore.instance
+        .addListener(_syncTemporarySearchHighlight);
     _syncAudioHighlight();
     _syncPersistentHighlights();
+    _syncTemporarySearchHighlight();
   }
 
   @override
   void didUpdateWidget(covariant _QpcV4PageContentStateful oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncAudioHighlight();
-    _syncPersistentHighlights();
+    // أعد الحساب فقط عند تغيّر المابينغ أو قائمة الأسطر
+    if (!identical(oldWidget.mapping, widget.mapping) ||
+        !identical(oldWidget.pageLines, widget.pageLines)) {
+      _syncAudioHighlight();
+      _syncPersistentHighlights();
+    }
   }
 
   @override
   void dispose() {
     AyahAudioPlayer.instance.removeListener(_syncAudioHighlight);
     AyahHighlightStore.instance.removeListener(_syncPersistentHighlights);
+    TemporarySearchAyahHighlightStore.instance
+        .removeListener(_syncTemporarySearchHighlight);
     super.dispose();
+  }
+
+  void _syncTemporarySearchHighlight() {
+    final store = TemporarySearchAyahHighlightStore.instance;
+    final mapping = widget.mapping;
+    if (!store.matchesPage(widget.page) || mapping == null) {
+      if (_temporarySearchSelection != null || _temporarySearchOpacity != 0.0) {
+        setState(() {
+          _temporarySearchSelection = null;
+          _temporarySearchOpacity = 0.0;
+        });
+      }
+      return;
+    }
+    final ranges = _getAyahRangesAcrossLines(
+      store.sura!,
+      store.ayah!,
+      widget.pageLines,
+      mapping,
+    );
+    final nextOpacity = store.opacity;
+    if (_sameSelectionRanges(_temporarySearchSelection, ranges) &&
+        (_temporarySearchOpacity - nextOpacity).abs() < 0.001) {
+      return;
+    }
+    setState(() {
+      _temporarySearchSelection = ranges.isEmpty ? null : ranges;
+      _temporarySearchOpacity = nextOpacity;
+    });
   }
 
   void _syncPersistentHighlights() {
@@ -1610,6 +1797,7 @@ class _QpcV4PageContentStatefulState extends State<_QpcV4PageContentStateful> {
       }
       return;
     }
+    if (_samePersistentEntries(_persistentSelection, entries)) return;
     setState(() => _persistentSelection = entries);
   }
 
@@ -1662,6 +1850,8 @@ class _QpcV4PageContentStatefulState extends State<_QpcV4PageContentStateful> {
       () => setState(() => _selection = null),
       wordSelection: _wordSelection,
       persistentSelection: _persistentSelection,
+      temporarySearchSelection: _temporarySearchSelection,
+      temporarySearchOpacity: _temporarySearchOpacity,
       hideAyahText: widget.hideAyahText,
     );
   }
@@ -1676,6 +1866,22 @@ bool _sameSelectionRanges(
   if (aa.length != bb.length) return false;
   for (int i = 0; i < aa.length; i++) {
     if (aa[i] != bb[i]) return false;
+  }
+  return true;
+}
+
+bool _samePersistentEntries(
+  List<(int, int, int, Color)>? a,
+  List<(int, int, int, Color)>? b,
+) {
+  final aa = a ?? const <(int, int, int, Color)>[];
+  final bb = b ?? const <(int, int, int, Color)>[];
+  if (aa.length != bb.length) return false;
+  for (int i = 0; i < aa.length; i++) {
+    if (aa[i].$1 != bb[i].$1 ||
+        aa[i].$2 != bb[i].$2 ||
+        aa[i].$3 != bb[i].$3 ||
+        aa[i].$4.toARGB32() != bb[i].$4.toARGB32()) return false;
   }
   return true;
 }

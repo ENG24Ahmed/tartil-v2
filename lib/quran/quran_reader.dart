@@ -1,9 +1,12 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:collection' show LinkedHashMap;
 import 'dart:math' show min;
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/rendering.dart'
+    show RenderRepaintBoundary, ScrollDirection;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -199,6 +202,10 @@ class _V1WavyHighlightPainter extends CustomPainter {
   }
 }
 
+// Fix 1: كاش لـ Future تحميل صفحات V1 — يمنع FutureBuilder من إعادة التحميل عند كل rebuild
+final Map<int, Future<List<MushafPageLine>>> _v1PageLoadFutures =
+    <int, Future<List<MushafPageLine>>>{};
+
 /// مكوّن صفحة واحد يُستخدم في جميع أنواع العرض (افتراضي، أفقي، صفحتان، قراءة طويلة).
 /// يُلف داخل [MushafStableViewport] لعزل التخطيط عن حجم العرض المنطقي وتكبير النص من النظام.
 Widget buildQpcPageContent(
@@ -237,7 +244,8 @@ Widget buildQpcPageContent(
       );
     } else {
       inner = FutureBuilder<List<MushafPageLine>>(
-        future: loadQpcV1PageForDisplay(page),
+        future: _v1PageLoadFutures.putIfAbsent(
+            page, () => loadQpcV1PageForDisplay(page)),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return ColoredBox(
@@ -250,7 +258,7 @@ Widget buildQpcPageContent(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'فشل تحميل الصفحة: ${snapshot.error}',
+                  'تعذّر تحميل الصفحة. أعد المحاولة.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 16),
                 ),
@@ -279,6 +287,55 @@ Widget buildQpcPageContent(
 }
 
 /// عرض صفحة QPC V1 من الأسطر المحملة (يُستخدم من buildQpcPageContent).
+/// Fix 2: يُخزّن Future تحميل خريطة الكلمات→الآيات ويمنع إعادة إنشائها
+/// عند كل pass لـ LayoutBuilder — مثل _WordToAyahMappingLoader في qpc_v4_renderer.dart
+class _WordToAyahMappingLoaderV1 extends StatefulWidget {
+  const _WordToAyahMappingLoaderV1({
+    required this.minR,
+    required this.maxR,
+    required this.builder,
+  });
+  final int minR;
+  final int maxR;
+  final Widget Function(
+    BuildContext,
+    AsyncSnapshot<Map<int, (int, int)>>,
+  ) builder;
+
+  @override
+  State<_WordToAyahMappingLoaderV1> createState() =>
+      _WordToAyahMappingLoaderV1State();
+}
+
+class _WordToAyahMappingLoaderV1State
+    extends State<_WordToAyahMappingLoaderV1> {
+  late Future<Map<int, (int, int)>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future =
+        QuranDb.instance.getWordToAyahMapping(widget.minR, widget.maxR);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WordToAyahMappingLoaderV1 oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.minR != widget.minR || oldWidget.maxR != widget.maxR) {
+      _future =
+          QuranDb.instance.getWordToAyahMapping(widget.minR, widget.maxR);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<int, (int, int)>>(
+      future: _future,
+      builder: widget.builder,
+    );
+  }
+}
+
 class _QpcV1PageFromLinesWidget extends StatelessWidget {
   const _QpcV1PageFromLinesWidget({
     required this.page,
@@ -306,7 +363,7 @@ class _QpcV1PageFromLinesWidget extends StatelessWidget {
   }
 }
 
-/// طبقة لا تشارك في ساحة الإيماءات — تكتشف النقرة عبر Listener فقط حتى لا يمنع السحب الأول.
+/// طبقة لا تشارك في ساحة الإيماءات — تلتقط النقر فقط دون تعطيل السحب.
 class _TapOverlay extends StatelessWidget {
   const _TapOverlay({required this.onTap});
   final VoidCallback onTap;
@@ -321,15 +378,13 @@ class _TapOverlay extends StatelessWidget {
   }
 }
 
-/// فيزياء تقليب احترافية: استجابة أسرع للمسافة/السرعة مع توقف طبيعي على الصفحة.
 class _ProfessionalPageScrollPhysics extends PageScrollPhysics {
   const _ProfessionalPageScrollPhysics({super.parent});
 
-  // Thresholds tuned for faster, more "native app" page turning.
-  static const double _kTurnPageThresholdSlow = 0.33;
-  static const double _kTurnPageThresholdFast = 0.18;
-  static const double _kMinFlingVelocity = 210.0;
-  static const double _kVelocityPageBias = 0.40;
+  static const double _kTurnPageThresholdSlow = 0.25;
+  static const double _kTurnPageThresholdFast = 0.15;
+  static const double _kMinFlingVelocity = 150.0;
+  static const double _kVelocityPageBias = 0.30;
 
   @override
   _ProfessionalPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
@@ -349,7 +404,6 @@ class _ProfessionalPageScrollPhysics extends PageScrollPhysics {
     if (viewport <= 0.0) {
       return super.createBallisticSimulation(position, velocity);
     }
-
     final page = position.pixels / viewport;
     final fastFling = velocity.abs() >= _kMinFlingVelocity;
     final biasedPage =
@@ -359,18 +413,15 @@ class _ProfessionalPageScrollPhysics extends PageScrollPhysics {
     final threshold =
         fastFling ? _kTurnPageThresholdFast : _kTurnPageThresholdSlow;
     var targetPage = fraction >= threshold ? base + 1.0 : base;
-
     final minPage = position.minScrollExtent / viewport;
     final maxPage = position.maxScrollExtent / viewport;
     targetPage = targetPage.clamp(minPage, maxPage);
     final targetPixels = targetPage * viewport;
-
     final tolerance = toleranceFor(position);
     if ((targetPixels - position.pixels).abs() < tolerance.distance &&
         velocity.abs() < tolerance.velocity) {
       return null;
     }
-
     return ScrollSpringSimulation(
       spring,
       position.pixels,
@@ -384,6 +435,105 @@ class _ProfessionalPageScrollPhysics extends PageScrollPhysics {
 /// قارئ المصحف: QPC V1 أو V4 أو V4 أسود حسب الوضع المختار.
 /// عند [embedded] = true يُستخدم كجسم داخل شاشة أخرى (بدون شريط علوي خاص).
 /// عند توفير [buildTopBarForPage] يُضمَّن الشريط داخل كل صفحة فيُسحَب معها.
+// ─────────────────────────────────────────────────────────────
+// Raster cache — stores pages as ui.Image after first full render
+// ─────────────────────────────────────────────────────────────
+
+class _PageRasterCache {
+  static const int _kMaxImages = 12;
+  static final LinkedHashMap<String, ui.Image> _cache =
+      LinkedHashMap<String, ui.Image>();
+
+  static ui.Image? get(String key) {
+    final img = _cache.remove(key);
+    if (img == null) return null;
+    _cache[key] = img;
+    return img;
+  }
+
+  static void put(String key, ui.Image img) {
+    _cache.remove(key)?.dispose();
+    _cache[key] = img;
+    while (_cache.length > _kMaxImages) {
+      _cache.remove(_cache.keys.first)?.dispose();
+    }
+  }
+
+}
+
+class _RasterCapturePageWrapper extends StatefulWidget {
+  const _RasterCapturePageWrapper({
+    required this.cacheKey,
+    required this.tier,
+    required this.child,
+  });
+
+  final String cacheKey;
+  final _PageRenderTier tier;
+  final Widget child;
+
+  @override
+  State<_RasterCapturePageWrapper> createState() =>
+      _RasterCapturePageWrapperState();
+}
+
+class _RasterCapturePageWrapperState
+    extends State<_RasterCapturePageWrapper> {
+  final _repaintKey = GlobalKey();
+  bool _captureScheduled = false;
+
+  void _scheduleCapture() {
+    if (_captureScheduled) return;
+    if (_PageRasterCache.get(widget.cacheKey) != null) return;
+    _captureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _captureScheduled = false;
+      if (!mounted) return;
+      try {
+        final ro = _repaintKey.currentContext?.findRenderObject();
+        if (ro is! RenderRepaintBoundary) return;
+        if (ro.debugNeedsPaint) {
+          _scheduleCapture();
+          return;
+        }
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        final img = await ro.toImage(pixelRatio: dpr);
+        _PageRasterCache.put(widget.cacheKey, img);
+        if (mounted) setState(() {});
+      } catch (_) {}
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _RasterCapturePageWrapper oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cacheKey != widget.cacheKey) _captureScheduled = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cached = _PageRasterCache.get(widget.cacheKey);
+
+    if (cached != null && widget.tier != _PageRenderTier.full) {
+      return RepaintBoundary(
+        child: SizedBox.expand(
+          child: RawImage(image: cached, fit: BoxFit.fill),
+        ),
+      );
+    }
+
+    if (widget.tier == _PageRenderTier.full && cached == null) {
+      _scheduleCapture();
+    }
+
+    return RepaintBoundary(
+      key: (widget.tier == _PageRenderTier.full && cached == null)
+          ? _repaintKey
+          : null,
+      child: widget.child,
+    );
+  }
+}
 class QuranReader extends StatefulWidget {
   const QuranReader({
     super.key,
@@ -423,6 +573,8 @@ class _QuranReaderState extends State<QuranReader> {
   static const String _surahNameFontFamily = 'SurahNameV4';
   static const double _basmallahRaiseDy = -2.0;
   static const String _basmallahFontFamily = 'KFGQPCHAFSUthmanicScript';
+  static const int _v1UniformScaleCacheMaxEntries = 240;
+  static final Map<String, double> _v1UniformScaleCache = <String, double>{};
   final QuranDb _db = QuranDb.instance;
   late final PageController _pageController;
   bool _ownsController = false;
@@ -435,9 +587,11 @@ class _QuranReaderState extends State<QuranReader> {
   Timer? _dragSettleTimer;
   Timer? _qualityTierTimer;
   double? _lastDragPixels;
-  int? _lastDragSampleUs;
+  int? _lastDragElapsedUs;
   double _recentDragVelocityPxPerSec = 0.0;
-  _PageRenderTier _renderTier = _PageRenderTier.full;
+  final Stopwatch _dragStopwatch = Stopwatch()..start();
+  final ValueNotifier<_PageRenderTier> _renderTierNotifier =
+      ValueNotifier(_PageRenderTier.full);
   QpcMushafMode _mode = QpcMushafMode.qpc4;
 
   QpcMushafMode get _effectiveMode => widget.mode ?? _mode;
@@ -465,12 +619,11 @@ class _QuranReaderState extends State<QuranReader> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final pageNum = _currentPageIndex + 1;
+      final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
       if (_effectiveMode == QpcMushafMode.qpc4 ||
           _effectiveMode == QpcMushafMode.qpc4Black) {
-        final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
         preloadNearbyPages(pageNum, before: radius, after: radius);
       } else if (_effectiveMode == QpcMushafMode.qpc1) {
-        final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
         _preloadV1Pages(pageNum, before: radius, after: radius);
       }
     });
@@ -480,22 +633,9 @@ class _QuranReaderState extends State<QuranReader> {
   void dispose() {
     _dragSettleTimer?.cancel();
     _qualityTierTimer?.cancel();
+    _renderTierNotifier.dispose();
     if (_ownsController) _pageController.dispose();
     super.dispose();
-  }
-
-  int _preloadRadiusForCurrentDrag() {
-    final v = _recentDragVelocityPxPerSec.abs();
-    if (v >= 3200) return 8;
-    if (v >= 2200) return 6;
-    if (v >= 1200) return 5;
-    if (v >= 700) return 4;
-    return 3;
-  }
-
-  void _setRenderTier(_PageRenderTier tier) {
-    if (_renderTier == tier) return;
-    setState(() => _renderTier = tier);
   }
 
   Future<void> _initDb() async {
@@ -508,13 +648,14 @@ class _QuranReaderState extends State<QuranReader> {
         });
         widget.onReady?.call();
       }
-      // إيقاف التسخين الشامل التلقائي لأنه يسبب ضغط I/O ملحوظًا أثناء التقليب.
-      // التحميل القريب + كاش الرام/القرص يكفيان للسلاسة دون عبء الخلفية الكبير.
+      // لا نبدأ warmAll تلقائيا لتجنب ضغط الخلفية أثناء التقليب.
     } catch (e) {
+      debugPrint('QuranReader db init failed: $e');
       if (mounted) {
         setState(() {
           _dbReady = false;
-          _initError = '$e';
+          _initError =
+              'حدث خطأ أثناء تحميل قاعدة البيانات. أعد المحاولة.';
         });
       }
     }
@@ -526,6 +667,20 @@ class _QuranReaderState extends State<QuranReader> {
     int after = PageCache.cacheWindowAfter,
   }) =>
       preloadNearbyQpc1Pages(currentPage, before: before, after: after);
+
+  int _preloadRadiusForCurrentDrag() {
+    final v = _recentDragVelocityPxPerSec.abs();
+    if (v >= 3200) return 8;
+    if (v >= 2200) return 6;
+    if (v >= 1200) return 5;
+    if (v >= 700) return 4;
+    return 3;
+  }
+
+  void _setRenderTier(_PageRenderTier tier) {
+    if (_renderTierNotifier.value == tier) return;
+    _renderTierNotifier.value = tier;
+  }
 
   void _goBackToMain() {
     if (!mounted) return;
@@ -582,8 +737,6 @@ class _QuranReaderState extends State<QuranReader> {
   static const double _linePaddingBottom = 0.32;
 
   static const String _arabicDigits = '٠١٢٣٤٥٦٧٨٩';
-  static const int _v1UniformScaleCacheMaxEntries = 240;
-  static final Map<String, double> _v1UniformScaleCache = <String, double>{};
   static String _toArabicDigits(int value) {
     return value.toString().replaceAllMapped(
         RegExp(r'\d'), (m) => _arabicDigits[int.parse(m.group(0)!)]);
@@ -873,13 +1026,13 @@ class _QuranReaderState extends State<QuranReader> {
         }
         if (mediumQualityMode) {
           return _WordToAyahMappingLoaderV1(
-            minRange: minR,
-            maxRange: maxR,
-            builder: (mapping) => _buildV1PageContentStatic(
+            minR: minR,
+            maxR: maxR,
+            builder: (_, mapSnap) => _buildV1PageContentStatic(
               context,
               constraints,
               page,
-              mapping,
+              mapSnap.data,
               pageLines,
               null,
               null,
@@ -891,22 +1044,22 @@ class _QuranReaderState extends State<QuranReader> {
           );
         }
         return _WordToAyahMappingLoaderV1(
-          minRange: minR,
-          maxRange: maxR,
-          builder: (mapping) => _V1PageContentStateful(
+          minR: minR,
+          maxR: maxR,
+          builder: (_, mapSnap) => _V1PageContentStateful(
             constraints: constraints,
             page: page,
             contentW: contentW,
             contentH: contentH,
             lineHeights: lineHeights,
             pageLines: pageLines,
-            mapping: mapping,
+            mapping: mapSnap.data,
             buildContent: (ctx, sel, persistentSel, wordSel, onS, onC) =>
                 _buildV1PageContentStatic(
               ctx,
               constraints,
               page,
-              mapping,
+              mapSnap.data,
               pageLines,
               sel,
               persistentSel,
@@ -923,7 +1076,6 @@ class _QuranReaderState extends State<QuranReader> {
 
   /// مقياس واحد لجميع أسطر الآية في الصفحة (مثل أضيق سطر يحتاج تصغيراً) حتى لا يختلف حجم الخط بين السطور بسبب [FittedBox] لكل سطر.
   static double _computeV1UniformAyahScale(
-    int page,
     List<MushafPageLine> displayLines,
     double layoutW,
     double slotHeight,
@@ -931,17 +1083,10 @@ class _QuranReaderState extends State<QuranReader> {
     double? ayahLineHeight,
     bool useWhiteTextOnDark,
   ) {
-    final cacheKey = [
-      page,
-      layoutW.toStringAsFixed(2),
-      slotHeight.toStringAsFixed(2),
-      fontSizeScale.toStringAsFixed(4),
-      (ayahLineHeight ?? 0).toStringAsFixed(4),
-      useWhiteTextOnDark ? '1' : '0',
-    ].join('|');
+    final cacheKey =
+        '${displayLines.length}|${layoutW.toStringAsFixed(2)}|${slotHeight.toStringAsFixed(2)}|${fontSizeScale.toStringAsFixed(4)}|${(ayahLineHeight ?? -1).toStringAsFixed(4)}|$useWhiteTextOnDark';
     final cached = _v1UniformScaleCache[cacheKey];
     if (cached != null) return cached;
-
     var minScale = 1.0;
     for (final line in displayLines) {
       if (line.lineType != 'ayah') continue;
@@ -1062,7 +1207,6 @@ class _QuranReaderState extends State<QuranReader> {
       bodyLinePad *= squeeze;
     }
     final uniformAyahScale = _computeV1UniformAyahScale(
-      page,
       displayLines,
       scaledW,
       slotHeight,
@@ -1726,15 +1870,13 @@ class _QuranReaderState extends State<QuranReader> {
               _dragSettleTimer?.cancel();
               _qualityTierTimer?.cancel();
               _lastDragPixels = n.metrics.pixels;
-              _lastDragSampleUs = DateTime.now().microsecondsSinceEpoch;
-              if (!_isDraggingPages) {
-                setState(() => _isDraggingPages = true);
-              }
-              _setRenderTier(_PageRenderTier.lite);
+              _lastDragElapsedUs = _dragStopwatch.elapsedMicroseconds;
+              _isDraggingPages = true; // حقل عادي — لا setState
+              _setRenderTier(_PageRenderTier.lite); // ValueNotifier — لا setState
             } else if (n is ScrollUpdateNotification) {
-              final nowUs = DateTime.now().microsecondsSinceEpoch;
+              final nowUs = _dragStopwatch.elapsedMicroseconds;
               final lastPx = _lastDragPixels;
-              final lastUs = _lastDragSampleUs;
+              final lastUs = _lastDragElapsedUs;
               if (lastPx != null && lastUs != null) {
                 final dtUs = nowUs - lastUs;
                 if (dtUs > 0) {
@@ -1745,23 +1887,28 @@ class _QuranReaderState extends State<QuranReader> {
                 }
               }
               _lastDragPixels = n.metrics.pixels;
-              _lastDragSampleUs = nowUs;
+              _lastDragElapsedUs = nowUs;
             } else if (n is ScrollEndNotification ||
                 (n is UserScrollNotification &&
                     n.direction == ScrollDirection.idle)) {
               _lastDragPixels = null;
-              _lastDragSampleUs = null;
+              _lastDragElapsedUs = null;
               _dragSettleTimer?.cancel();
-              _dragSettleTimer = Timer(const Duration(milliseconds: 160), () {
+              _dragSettleTimer = Timer(const Duration(milliseconds: 200), () {
                 if (!mounted) return;
-                if (_isDraggingPages) {
-                  setState(() => _isDraggingPages = false);
-                }
+                _isDraggingPages = false; // حقل عادي — لا setState
                 _qualityTierTimer?.cancel();
+                // medium أولاً: تُحمَّل الخريطة فقط بدون highlights كاملة
                 _setRenderTier(_PageRenderTier.medium);
-                _qualityTierTimer = Timer(const Duration(milliseconds: 180), () {
+                _qualityTierTimer = Timer(const Duration(milliseconds: 350), () {
                   if (!mounted) return;
-                  _setRenderTier(_PageRenderTier.full);
+                  // full في idle frame — يضمن عدم تعارضه مع أي animation جارية
+                  SchedulerBinding.instance.scheduleTask(
+                    () {
+                      if (mounted) _setRenderTier(_PageRenderTier.full);
+                    },
+                    Priority.idle,
+                  );
                 });
               });
             }
@@ -1775,52 +1922,69 @@ class _QuranReaderState extends State<QuranReader> {
             physics: const _ProfessionalPageScrollPhysics(),
             allowImplicitScrolling: false,
             onPageChanged: (index) {
-              setState(() => _currentPageIndex = index);
+              // embedded=true: build() يُرجع _buildBody() مباشرة دون استخدام _currentPageIndex
+              // لا فائدة من setState في هذه الحالة — نحدّث الحقل مباشرة
+              if (!widget.embedded) {
+                setState(() => _currentPageIndex = index);
+              } else {
+                _currentPageIndex = index;
+              }
               widget.onPageChanged?.call(index + 1);
               final pageNum = index + 1;
+              final radius = _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
               PageCache.instance.trimRamToNearbyPages(pageNum);
               if (_effectiveMode == QpcMushafMode.qpc4 ||
                   _effectiveMode == QpcMushafMode.qpc4Black) {
-                final radius =
-                    _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
                 preloadNearbyPages(pageNum, before: radius, after: radius);
               } else if (_effectiveMode == QpcMushafMode.qpc1) {
-                final radius =
-                    _isDraggingPages ? _preloadRadiusForCurrentDrag() : 2;
                 _preloadV1Pages(pageNum, before: radius, after: radius);
               }
             },
             itemBuilder: (context, index) {
               final page = index + 1;
-              final pageContent = buildQpcPageContent(
-                context,
-                page,
-                _effectiveMode,
-                forceWhiteMushafText: widget.forceWhiteMushafText,
-                lightweightMode: _renderTier == _PageRenderTier.lite,
-                mediumQualityMode: _renderTier == _PageRenderTier.medium,
-              );
-              final wrappedContent = RepaintBoundary(child: pageContent);
-              if (widget.buildTopBarForPage != null) {
-                if (_effectiveMode == QpcMushafMode.qpc1 ||
-                    _effectiveMode == QpcMushafMode.qpc4 ||
-                    _effectiveMode == QpcMushafMode.qpc4Black) {
-                  return Column(
-                    children: [
-                      widget.buildTopBarForPage!(page),
-                      Expanded(child: wrappedContent),
-                      _buildV1PageNumberRow(page),
-                    ],
+              final mode = _effectiveMode;
+              final topBarBuilder = widget.buildTopBarForPage;
+              return ValueListenableBuilder<_PageRenderTier>(
+                valueListenable: _renderTierNotifier,
+                builder: (context, tier, _) {
+                  final pageContent = buildQpcPageContent(
+                    context,
+                    page,
+                    mode,
+                    forceWhiteMushafText: widget.forceWhiteMushafText,
+                    lightweightMode: tier == _PageRenderTier.lite,
+                    mediumQualityMode: tier == _PageRenderTier.medium,
                   );
-                }
-                return Column(
-                  children: [
-                    widget.buildTopBarForPage!(page),
-                    Expanded(child: wrappedContent),
-                  ],
-                );
-              }
-              return wrappedContent;
+                  // cacheKey يشمل الوضع والصفحة ولون النص
+                  final cacheKey =
+                      '${mode.name}-$page${widget.forceWhiteMushafText ? '-w' : ''}';
+                  final wrappedContent = _RasterCapturePageWrapper(
+                    cacheKey: cacheKey,
+                    tier: tier,
+                    child: pageContent,
+                  );
+                  if (topBarBuilder != null) {
+                    if (mode == QpcMushafMode.qpc1 ||
+                        mode == QpcMushafMode.qpc4 ||
+                        mode == QpcMushafMode.qpc4Black) {
+                      return Column(
+                        children: [
+                          topBarBuilder(page),
+                          Expanded(child: wrappedContent),
+                          _buildV1PageNumberRow(page),
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        topBarBuilder(page),
+                        Expanded(child: wrappedContent),
+                      ],
+                    );
+                  }
+                  return wrappedContent;
+                },
+              );
             },
           ),
         ),
@@ -1842,7 +2006,7 @@ class _QuranReaderState extends State<QuranReader> {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Text(
-              'فشل تحميل قاعدة البيانات:\n$_initError',
+              'حدث خطأ أثناء تحميل قاعدة البيانات. أعد المحاولة.',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 16),
             ),
@@ -1855,7 +2019,7 @@ class _QuranReaderState extends State<QuranReader> {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Text(
-              'فشل تحميل قاعدة البيانات:\n$_initError',
+              'حدث خطأ أثناء تحميل قاعدة البيانات. أعد المحاولة.',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 16),
             ),
@@ -1951,65 +2115,15 @@ class _V1PageContentStateful extends StatefulWidget {
   State<_V1PageContentStateful> createState() => _V1PageContentStatefulState();
 }
 
-class _WordToAyahMappingLoaderV1 extends StatefulWidget {
-  const _WordToAyahMappingLoaderV1({
-    required this.minRange,
-    required this.maxRange,
-    required this.builder,
-  });
-
-  final int minRange;
-  final int maxRange;
-  final Widget Function(Map<int, (int sura, int ayah)>? mapping) builder;
-
-  @override
-  State<_WordToAyahMappingLoaderV1> createState() =>
-      _WordToAyahMappingLoaderV1State();
-}
-
-class _WordToAyahMappingLoaderV1State
-    extends State<_WordToAyahMappingLoaderV1> {
-  late Future<Map<int, (int sura, int ayah)>> _mappingFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _mappingFuture = QuranDb.instance.getWordToAyahMapping(
-      widget.minRange,
-      widget.maxRange,
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _WordToAyahMappingLoaderV1 oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.minRange != widget.minRange ||
-        oldWidget.maxRange != widget.maxRange) {
-      _mappingFuture = QuranDb.instance.getWordToAyahMapping(
-        widget.minRange,
-        widget.maxRange,
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Map<int, (int, int)>>(
-      future: _mappingFuture,
-      builder: (_, snapshot) => widget.builder(snapshot.data),
-    );
-  }
-}
-
 class _V1PageContentStatefulState extends State<_V1PageContentStateful> {
   List<(int, int, int)>? _selection;
   List<(int, int, int, Color)>? _persistentSelection;
   int? _lastAudioSura;
   int? _lastAudioAyah;
   int _lastAudioSegmentIndex = -1;
-  int? _lastAudioSegmentToken;
+  Object? _lastAudioSegmentToken;
   bool _lastAudioActive = false;
-  bool _lastAudioShowAyahHighlight = false;
+  bool _lastShowAyahHighlight = false;
 
   @override
   void initState() {
@@ -2034,20 +2148,26 @@ class _V1PageContentStatefulState extends State<_V1PageContentStateful> {
 
   void _onAudioChanged() {
     final player = AyahAudioPlayer.instance;
-    final sameState = _lastAudioSura == player.currentSura &&
-        _lastAudioAyah == player.currentAyah &&
-        _lastAudioSegmentIndex == player.currentSegmentIndex &&
-        _lastAudioSegmentToken == player.currentSegmentToken &&
-        _lastAudioActive == player.isActive &&
-        _lastAudioShowAyahHighlight == player.showAyahHighlight;
-    if (sameState) return;
-    _lastAudioSura = player.currentSura;
-    _lastAudioAyah = player.currentAyah;
-    _lastAudioSegmentIndex = player.currentSegmentIndex;
-    _lastAudioSegmentToken = player.currentSegmentToken;
-    _lastAudioActive = player.isActive;
-    _lastAudioShowAyahHighlight = player.showAyahHighlight;
-    setState(() {});
+    final nextActive = player.isActive;
+    final nextSura = player.currentSura;
+    final nextAyah = player.currentAyah;
+    final nextSegIndex = player.currentSegmentIndex;
+    final nextSegToken = player.currentSegmentToken;
+    final nextShow = player.showAyahHighlight;
+    final changed = _lastAudioActive != nextActive ||
+        _lastAudioSura != nextSura ||
+        _lastAudioAyah != nextAyah ||
+        _lastAudioSegmentIndex != nextSegIndex ||
+        _lastAudioSegmentToken != nextSegToken ||
+        _lastShowAyahHighlight != nextShow;
+    if (!changed) return;
+    _lastAudioActive = nextActive;
+    _lastAudioSura = nextSura;
+    _lastAudioAyah = nextAyah;
+    _lastAudioSegmentIndex = nextSegIndex;
+    _lastAudioSegmentToken = nextSegToken;
+    _lastShowAyahHighlight = nextShow;
+    if (mounted) setState(() {});
   }
 
   void _syncPersistentHighlights() {

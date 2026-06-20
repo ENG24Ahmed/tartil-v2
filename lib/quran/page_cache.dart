@@ -6,11 +6,11 @@ class PageCache {
   PageCache._();
   static final PageCache instance = PageCache._();
 
-  /// عدد الصفحات المحفوظة قبل الصفحة الحالية (مع الحالية = 5 صفحات كحد أقصى في النافذة).
-  static const int cacheWindowBefore = 2;
+  /// عدد الصفحات المحفوظة قبل الصفحة الحالية (مع الحالية = 7 صفحات في النافذة).
+  static const int cacheWindowBefore = 3;
 
   /// عدد الصفحات المحفوظة بعد الصفحة الحالية.
-  static const int cacheWindowAfter = 2;
+  static const int cacheWindowAfter = 3;
 
   final Map<String, List<MushafPageLine>> _cache = {};
 
